@@ -1,40 +1,84 @@
-.TH MUSIC-PLAYER 1 "August 2026" "music-player 0.1.0" "User Commands"
+.TH MUSIC-PLAYER 1 "August 2026" "music-player 0.2.0" "User Commands"
 .SH NAME
-music-player \- play music in a terminal interface
+music-player \- terminal music library player powered by GStreamer
 .SH SYNOPSIS
 .B music-player
-.RI [ directory ]
+.RI [ DIRECTORY ]
+.br
+.B music-player
+.BI --set-library " PATH"
 .SH DESCRIPTION
 .B music-player
-recursively scans the given directory for supported audio files and displays
-them in a terminal interface. If no directory is supplied, it scans the
-current directory. Audio playback is provided by
-.BR ffplay (1).
+opens a local music library in a terminal interface. With no argument it uses
+the configured library, or the XDG Music directory on first use. A positional
+directory overrides the library for the current session only.
 .PP
-Supported filename extensions are mp3, flac, wav, ogg, opus, m4a, and aac.
+Scanning and fuzzy search run in the background. Metadata is cached in SQLite;
+settings and named playlists are stored separately according to the XDG base
+directory specification.
+.SH OPTIONS
+.TP
+.BI --set-library " PATH"
+Save PATH as the main music library and start the player.
+.TP
+.BR -h , " --help"
+Show command-line help.
+.TP
+.BR -V , " --version"
+Show the program version.
 .SH KEYS
 .TP
-.BR Up , Down , k , j
+.BR Up , Down , j , k
 Select a track.
 .TP
 .B Enter
-Play the selected track.
+Play the selected track immediately without clearing the manual queue.
 .TP
 .B Space
 Pause or resume playback.
 .TP
-.B s
-Stop playback.
+.BR Left , Right , h , l
+Seek backward or forward by 10 seconds.
+.TP
+.BR - , =
+Lower or raise volume by 5 percent.
+.TP
+.B m
+Toggle mute.
 .TP
 .BR n , p
-Play the next or previous track.
+Play the next track or return through actual playback history.
 .TP
-.BR q , Escape
+.B z
+Cycle sequential, repeat-all, repeat-one, and shuffle modes.
+.TP
+.B /
+Enter live fuzzy search.
+.TP
+.B r
+Rescan the library in the background.
+.TP
+.BR a , A
+Append the selected track to the queue or make it the next track.
+.TP
+.B P
+Open the named playlist panel.
+.TP
+.B ?
+Open the complete in-application help.
+.TP
+.B q
 Quit.
 .SH FILES
 .TP
-.I /usr/bin/ffplay
-Required playback program.
+.I $XDG_CONFIG_HOME/tui-music-player/config.toml
+Main library and playback settings.
+.TP
+.I $XDG_DATA_HOME/tui-music-player/playlists/*.json
+Independent named playlist files.
+.TP
+.I $XDG_CACHE_HOME/tui-music-player/library.sqlite3
+Rebuildable incremental music metadata cache.
 .SH AUTHORS
 HZ-TYZQ
 .SH LICENSE

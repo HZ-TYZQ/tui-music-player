@@ -1,3 +1,9 @@
 pub mod app;
+pub mod cli;
+pub mod config;
+pub mod library;
 pub mod player;
+pub mod playlist;
+pub mod search;
+pub mod track;
 pub mod ui;

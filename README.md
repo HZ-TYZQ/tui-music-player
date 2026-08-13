@@ -1,44 +1,97 @@
 # Music Player
 
-Music Player 是一个用 Rust 编写的终端音乐播放器。它递归扫描指定目录中的音频文件，在终端界面中提供浏览、播放、暂停、停止和自动连播功能。
+Music Player 是一个用 Rust 编写的终端音乐库播放器。它使用 GStreamer 播放和读取媒体信息，用 SQLite 保存可随时重建的增量索引，并把配置与播放列表保存在标准 XDG 用户目录中。
+
+## 功能
+
+- 后台递归扫描音乐库，界面不会因大型目录而停止响应
+- 展示标题、歌手、专辑、格式、时长和实时播放进度
+- 播放、平滑暂停、前后跳转、音量和静音
+- 顺序、列表循环、单曲循环和随机四种播放模式
+- Unicode 友好的实时模糊搜索，覆盖标题、歌手、专辑和相对路径
+- 临时播放队列与持久命名播放列表
+- 播放列表中的失效歌曲会被标记并跳过；删除列表绝不删除音乐文件
 
 ## 运行要求
 
 - Linux 终端
-- `/usr/bin/ffplay`（程序实际播放音频所必需）
+- GStreamer 1.x 及常用音频解码插件
+- SQLite 3
 
-在 Fedora 44 上，`ffplay` 通常由 RPM Fusion 仓库的 FFmpeg 软件包提供。
-
-## 从源码运行
+Fedora 44 的 RPM 会自动声明所需运行时插件。源码构建还需要：
 
 ```sh
-cargo run --locked -- /path/to/music
+sudo dnf install \
+  rust cargo \
+  gstreamer1-devel \
+  gstreamer1-plugins-base-devel \
+  gstreamer1-plugins-bad-free-devel \
+  sqlite-devel
 ```
 
-省略目录时，程序扫描当前工作目录。支持 `mp3`、`flac`、`wav`、`ogg`、`opus`、`m4a` 和 `aac` 文件，最多递归扫描八层子目录。
+## 使用
+
+```sh
+# 首次运行默认使用系统的 XDG Music 目录
+cargo run --locked
+
+# 只在本次运行打开另一个目录
+cargo run --locked -- /path/to/music
+
+# 永久设置主音乐库
+cargo run --locked -- --set-library /path/to/music
+```
+
+查看完整命令行帮助：
+
+```sh
+music-player --help
+```
 
 ## 按键
 
 | 按键 | 操作 |
 |---|---|
-| `↑` / `↓` 或 `k` / `j` | 选择曲目 |
-| `Enter` | 播放选中曲目 |
-| `Space` | 暂停或继续 |
-| `s` | 停止 |
-| `n` / `p` | 下一曲 / 上一曲 |
-| `q` 或 `Esc` | 退出 |
+| `↑/↓`、`j/k` | 选择歌曲 |
+| `Enter` | 立即播放选中歌曲，保留队列 |
+| `Space` | 暂停/继续 |
+| `←/→`、`h/l` | 后退/前进 10 秒 |
+| `-`、`=` | 音量降低/提高 5% |
+| `m` | 静音 |
+| `n/p` | 下一首/上一首历史 |
+| `z` | 切换播放模式 |
+| `/` | 实时模糊搜索 |
+| `r` | 后台重新扫描 |
+| `a/A` | 加到队尾/设为下一首 |
+| `P` | 播放列表面板 |
+| `?` | 内置完整帮助 |
+| `q` | 退出 |
 
-## 构建和安装 RPM
+播放列表面板中，`c` 新建、`a` 加入当前选中歌曲、`Enter` 查看内容、`x` 确认删除。列表内容中可按 `Enter` 从选中项开始播放，按 `d` 只从列表移除该项。
 
-在已安装 Fedora RPM 构建工具和 Rust RPM 构建依赖的环境中运行：
+## 用户数据
+
+程序不会在音乐库目录中写入文件：
+
+- 配置：`$XDG_CONFIG_HOME/tui-music-player/config.toml`
+- 播放列表：`$XDG_DATA_HOME/tui-music-player/playlists/*.json`
+- 可删除缓存：`$XDG_CACHE_HOME/tui-music-player/library.sqlite3`
+
+没有显式设置 XDG 基础目录时，通常对应 `~/.config`、`~/.local/share` 和 `~/.cache`。
+
+## 测试与 RPM
 
 ```sh
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets --locked
+
 ./packaging/build-rpm.sh
-sudo dnf install ./packaging/rpmbuild/RPMS/x86_64/music-player-0.1.0-1.fc44.x86_64.rpm
+sudo dnf install ./packaging/rpmbuild/RPMS/x86_64/music-player-0.2.0-1.fc44.x86_64.rpm
 ```
 
-升级时再次运行 `sudo dnf upgrade <RPM 路径>`；卸载使用 `sudo dnf remove music-player`。RPM 明确依赖 `/usr/bin/ffplay`，并同时生成可供重新构建的 SRPM。
+RPM 构建脚本会生成离线 vendor 归档、二进制 RPM 和 SRPM。升级使用 `sudo dnf upgrade <RPM 路径>`，卸载使用 `sudo dnf remove music-player`。
 
 ## 许可证
 
-本项目采用 MIT 许可证，详见 `LICENSE`。
+版权属名：HZ-TYZQ。项目采用 MIT 许可证，详见 `LICENSE`。

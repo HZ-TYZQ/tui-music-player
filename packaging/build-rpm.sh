@@ -48,7 +48,7 @@ tar -C "$project_dir" \
     | tar -C "$work_dir/$source_name" -xf -
 tar -C "$work_dir" -czf "$source_archive" "$source_name"
 
-(cd "$project_dir" && cargo vendor --locked --versioned-dirs "$work_dir/vendor" >/dev/null)
+(cd "$project_dir" && cargo vendor --quiet --locked --versioned-dirs "$work_dir/vendor" >/dev/null)
 printf '%s\n' \
     '[source.crates-io]' \
     'replace-with = "vendored-sources"' \
