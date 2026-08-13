@@ -1,0 +1,41 @@
+.TH MUSIC-PLAYER 1 "August 2026" "music-player 0.1.0" "User Commands"
+.SH NAME
+music-player \- play music in a terminal interface
+.SH SYNOPSIS
+.B music-player
+.RI [ directory ]
+.SH DESCRIPTION
+.B music-player
+recursively scans the given directory for supported audio files and displays
+them in a terminal interface. If no directory is supplied, it scans the
+current directory. Audio playback is provided by
+.BR ffplay (1).
+.PP
+Supported filename extensions are mp3, flac, wav, ogg, opus, m4a, and aac.
+.SH KEYS
+.TP
+.BR Up , Down , k , j
+Select a track.
+.TP
+.B Enter
+Play the selected track.
+.TP
+.B Space
+Pause or resume playback.
+.TP
+.B s
+Stop playback.
+.TP
+.BR n , p
+Play the next or previous track.
+.TP
+.BR q , Escape
+Quit.
+.SH FILES
+.TP
+.I /usr/bin/ffplay
+Required playback program.
+.SH AUTHORS
+HZ-TYZQ
+.SH LICENSE
+MIT License.

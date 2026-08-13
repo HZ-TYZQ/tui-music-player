@@ -1,0 +1,4 @@
+/target
+/Temp/
+/packaging/rpmbuild/
+/packaging/*.tar.gz
