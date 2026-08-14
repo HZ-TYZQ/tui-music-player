@@ -13,6 +13,8 @@ Music Player 是一个用 Rust 编写的终端音乐库播放器。它使用 GSt
 - 临时播放队列与持久命名播放列表
 - 播放列表中的失效歌曲会被标记并跳过；删除列表绝不删除音乐文件
 
+默认界面继承终端自身的背景和主要前景色，不绘制应用专属的全局背景。普通信息保持灰阶，只有音频频谱持续使用低饱和度的青色到洋红色渐变。
+
 ## 运行要求
 
 - Linux 终端
@@ -48,6 +50,8 @@ cargo run --locked -- --set-library /path/to/music
 ```sh
 music-player --help
 ```
+
+通过 RPM 安装后，也可以在桌面应用菜单中搜索“Music Player”或“音乐播放器”。菜单项会使用桌面环境配置的默认终端启动程序，不要求安装某个特定的终端模拟器。
 
 ## 按键
 
@@ -87,6 +91,12 @@ music-player --help
 
 ## 测试与 RPM
 
+构建 RPM 还需要 Fedora 的打包工具和桌面入口检查工具：
+
+```sh
+sudo dnf install rpm-build desktop-file-utils
+```
+
 ```sh
 cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
@@ -96,7 +106,7 @@ cargo test --all-targets --locked
 sudo dnf install ./packaging/rpmbuild/RPMS/x86_64/music-player-1.0.0-1.fc44.x86_64.rpm
 ```
 
-RPM 构建脚本会生成离线 vendor 归档、二进制 RPM 和 SRPM。升级使用 `sudo dnf upgrade <RPM 路径>`，卸载使用 `sudo dnf remove music-player`。
+RPM 构建脚本会生成离线 vendor 归档、二进制 RPM 和 SRPM。安装后的 RPM 同时提供命令行程序、man 手册、桌面菜单入口、可缩放 SVG 图标和 48 px 兼容图标。升级使用 `sudo dnf upgrade <RPM 路径>`，卸载使用 `sudo dnf remove music-player`。
 
 ## 许可证
 

@@ -10,19 +10,31 @@ use ratatui::widgets::{
 
 use crate::app::{App, Overlay};
 use crate::player::PlayState;
+use crate::theme::{DEFAULT_THEME, Theme};
 
-const HIGHLIGHT_BG: Color = Color::Rgb(52, 56, 70);
 const BASE_LAYOUT_HEIGHT: u16 = 11;
 const MAX_VISUALIZER_HEIGHT: u16 = 5;
 const MIN_VISUALIZER_HEIGHT: u16 = 2;
 
 pub fn draw(frame: &mut Frame, app: &App) {
+    draw_with_theme(frame, app, &DEFAULT_THEME);
+}
+
+fn draw_with_theme(frame: &mut Frame, app: &App, theme: &Theme) {
     let area = frame.area();
     if area.width < 42 || area.height < 12 {
         frame.render_widget(
             Paragraph::new("终端窗口太小\n请调整到至少 42×12")
                 .alignment(Alignment::Center)
-                .block(Block::bordered().title(" Music Player ")),
+                .style(Style::new().fg(theme.muted))
+                .block(
+                    Block::bordered()
+                        .border_style(Style::new().fg(theme.border))
+                        .title(Span::styled(
+                            " Music Player ",
+                            Style::new().fg(theme.primary).bold(),
+                        )),
+                ),
             area,
         );
         return;
@@ -36,9 +48,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
             Constraint::Length(1),
         ])
         .split(area);
-        draw_library(frame, app, chunks[0]);
-        draw_now_playing(frame, app, chunks[1]);
-        draw_footer(frame, app, chunks[2]);
+        draw_library(frame, app, chunks[0], theme);
+        draw_now_playing(frame, app, chunks[1], theme);
+        draw_footer(frame, app, chunks[2], theme);
     } else {
         let chunks = Layout::vertical([
             Constraint::Min(6),
@@ -47,12 +59,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
             Constraint::Length(1),
         ])
         .split(area);
-        draw_library(frame, app, chunks[0]);
-        draw_visualizer(frame, app, chunks[1]);
-        draw_now_playing(frame, app, chunks[2]);
-        draw_footer(frame, app, chunks[3]);
+        draw_library(frame, app, chunks[0], theme);
+        draw_visualizer(frame, app, chunks[1], theme);
+        draw_now_playing(frame, app, chunks[2], theme);
+        draw_footer(frame, app, chunks[3], theme);
     }
-    draw_overlay(frame, app);
+    draw_overlay(frame, app, theme);
 }
 
 fn visualizer_height(terminal_height: u16, enabled: bool) -> u16 {
@@ -67,20 +79,23 @@ fn visualizer_height(terminal_height: u16, enabled: bool) -> u16 {
     }
 }
 
-fn draw_library(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_library(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     let scan = if app.scanning {
         format!(" · 扫描中 {}/{} ", app.scan_progress.0, app.scan_progress.1)
     } else {
         format!(" · {} 首 ", app.visible_indices().len())
     };
     let title = Line::from(vec![
-        " ♪ Music Player ".cyan().bold(),
-        format!("· {}", app.library_dir.display()).dark_gray(),
-        scan.dark_gray(),
+        Span::styled(" ♪ Music Player ", Style::new().fg(theme.primary).bold()),
+        Span::styled(
+            format!("· {}", app.library_dir.display()),
+            Style::new().fg(theme.muted),
+        ),
+        Span::styled(scan, Style::new().fg(theme.muted)),
     ]);
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().dark_gray())
+        .border_style(Style::new().fg(theme.border))
         .title(title);
 
     if app.tracks.is_empty() {
@@ -89,17 +104,28 @@ fn draw_library(frame: &mut Frame, app: &App, area: Rect) {
         } else {
             "  音乐库中没有支持的音频文件\n  按 r 重新扫描，或用 --set-library PATH 更换主库"
         };
-        frame.render_widget(Paragraph::new(text).dark_gray().block(block), area);
+        frame.render_widget(
+            Paragraph::new(text)
+                .style(Style::new().fg(theme.muted))
+                .block(block),
+            area,
+        );
         return;
     }
 
     let items = app.visible_indices().iter().filter_map(|index| {
         let track = app.tracks.get(*index)?;
         let current = app.playing_index == Some(*index);
-        let (icon, style) = if current {
-            playback_action_indicator(app.player.state())
+        let (icon, icon_style) = if current {
+            playback_action_indicator(app.player.state(), theme)
         } else {
-            ("  ", Style::new())
+            ("  ", Style::new().fg(theme.primary))
+        };
+        let title_style = Style::new().fg(theme.primary);
+        let title_style = if current {
+            title_style.bold()
+        } else {
+            title_style
         };
         let artist = track.artist.as_deref().unwrap_or("未知歌手");
         let album = track.album.as_deref().unwrap_or("未知专辑");
@@ -109,33 +135,36 @@ fn draw_library(frame: &mut Frame, app: &App, area: Rect) {
             .map(fmt_duration)
             .unwrap_or_else(|| "--:--".into());
         Some(ListItem::new(Line::from(vec![
-            Span::styled(icon, style),
-            Span::styled(track.display_title(), style),
+            Span::styled(icon, icon_style),
+            Span::styled(track.display_title(), title_style),
             "  ".into(),
-            Span::styled(artist, Style::new().dark_gray()),
-            " · ".dark_gray(),
-            Span::styled(album, Style::new().dark_gray()),
-            " · ".dark_gray(),
-            Span::styled(format, Style::new().cyan()),
-            " · ".dark_gray(),
-            Span::styled(duration, Style::new().dark_gray()),
+            Span::styled(artist, Style::new().fg(theme.muted)),
+            Span::styled(" · ", Style::new().fg(theme.muted)),
+            Span::styled(album, Style::new().fg(theme.muted)),
+            Span::styled(" · ", Style::new().fg(theme.muted)),
+            Span::styled(format, Style::new().fg(theme.muted)),
+            Span::styled(" · ", Style::new().fg(theme.muted)),
+            Span::styled(duration, Style::new().fg(theme.muted)),
         ])))
     });
 
     let list = List::new(items)
         .block(block)
-        .highlight_style(Style::new().bg(HIGHLIGHT_BG).bold())
-        .highlight_symbol("▸ ".cyan());
+        .highlight_style(Style::new().bg(theme.selection_bg).bold())
+        .highlight_symbol(Span::styled("▸ ", Style::new().fg(theme.primary)));
     let selected = (!app.visible_indices().is_empty()).then_some(app.selected);
     let mut state = ListState::default().with_selected(selected);
     frame.render_stateful_widget(list, area, &mut state);
 }
 
-fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().magenta())
-        .title(" ♫ 正在播放 ".magenta().bold());
+        .border_style(Style::new().fg(theme.border))
+        .title(Span::styled(
+            " ♫ 正在播放 ",
+            Style::new().fg(theme.primary).bold(),
+        ));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -143,21 +172,21 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
     let top = Layout::horizontal([Constraint::Min(10), Constraint::Length(30)]).split(rows[0]);
     let now = match app.current_track() {
         Some(track) => {
-            let (icon, style) = playback_action_indicator(app.player.state());
+            let (icon, style) = playback_action_indicator(app.player.state(), theme);
             Line::from(vec![
                 Span::styled(icon, style),
-                Span::styled(track.display_title(), Style::new().white().bold()),
+                Span::styled(track.display_title(), Style::new().fg(theme.primary).bold()),
                 Span::styled(
                     track
                         .artist
                         .as_ref()
                         .map(|artist| format!(" — {artist}"))
                         .unwrap_or_default(),
-                    Style::new().dark_gray(),
+                    Style::new().fg(theme.muted),
                 ),
             ])
         }
-        None => Line::from("■ 未在播放".dark_gray()),
+        None => Line::from(Span::styled("■ 未在播放", Style::new().fg(theme.muted))),
     };
     frame.render_widget(Paragraph::new(now), top[0]);
 
@@ -174,7 +203,7 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
             app.queue.len()
         ))
         .alignment(Alignment::Right)
-        .dark_gray(),
+        .style(Style::new().fg(theme.muted)),
         top[1],
     );
 
@@ -195,26 +224,29 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
     );
     frame.render_widget(
         Gauge::default()
-            .gauge_style(Style::new().cyan())
+            .gauge_style(Style::new().fg(theme.primary))
             .ratio(ratio)
             .label(label),
         rows[1],
     );
 }
 
-fn playback_action_indicator(state: PlayState) -> (&'static str, Style) {
+fn playback_action_indicator(state: PlayState, theme: &Theme) -> (&'static str, Style) {
     match state {
-        PlayState::Playing => ("⏸ ", Style::new().yellow().bold()),
-        PlayState::Paused => ("▶ ", Style::new().green().bold()),
-        PlayState::Stopped => ("■ ", Style::new().dark_gray()),
+        PlayState::Playing => ("⏸ ", Style::new().fg(theme.primary).bold()),
+        PlayState::Paused => ("▶ ", Style::new().fg(theme.primary).bold()),
+        PlayState::Stopped => ("■ ", Style::new().fg(theme.muted)),
     }
 }
 
-fn draw_visualizer(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_visualizer(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     let block = Block::default()
         .borders(Borders::TOP)
-        .border_style(Style::new().dark_gray())
-        .title(" 频谱 · 50 Hz → 8 kHz ".cyan().bold());
+        .border_style(Style::new().fg(theme.border))
+        .title(Span::styled(
+            " 频谱 · 50 Hz → 8 kHz ",
+            Style::new().fg(theme.primary).bold(),
+        ));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.is_empty() {
@@ -236,7 +268,7 @@ fn draw_visualizer(frame: &mut Frame, app: &App, area: Rect) {
             let cell_fill = (value * f32::from(inner.height) - remaining_rows).clamp(0.0, 1.0);
             spans.push(Span::styled(
                 spectrum_block(cell_fill).to_string(),
-                Style::new().fg(frequency_color(index, bars.len())),
+                Style::new().fg(frequency_color(index, bars.len(), theme)),
             ));
             if index + 1 < bars.len() {
                 spans.push(Span::raw(" "));
@@ -281,41 +313,51 @@ fn spectrum_block(fill: f32) -> char {
     }
 }
 
-fn frequency_color(index: usize, count: usize) -> Color {
+fn frequency_color(index: usize, count: usize, theme: &Theme) -> Color {
     let ratio = if count <= 1 {
         0.0
     } else {
         index as f32 / (count - 1) as f32
     };
+    let (Color::Rgb(low_r, low_g, low_b), Color::Rgb(high_r, high_g, high_b)) =
+        (theme.spectrum_low, theme.spectrum_high)
+    else {
+        return theme.spectrum_low;
+    };
     let mix =
         |low: u8, high: u8| (f32::from(low) + (f32::from(high) - f32::from(low)) * ratio) as u8;
-    Color::Rgb(mix(20, 220), mix(210, 70), mix(220, 180))
+    Color::Rgb(mix(low_r, high_r), mix(low_g, high_g), mix(low_b, high_b))
 }
 
-fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_footer(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     let line = if app.search_active {
         Line::from(vec![
-            " / ".cyan().bold(),
-            app.search.query().white(),
-            "█".cyan(),
-            format!(
-                "  {} 个结果 · Enter 播放 · Esc 清除",
-                app.visible_indices().len()
-            )
-            .dark_gray(),
+            Span::styled(" / ", Style::new().fg(theme.primary).bold()),
+            Span::styled(app.search.query(), Style::new().fg(theme.primary)),
+            Span::styled("█", Style::new().fg(theme.primary)),
+            Span::styled(
+                format!(
+                    "  {} 个结果 · Enter 播放 · Esc 清除",
+                    app.visible_indices().len()
+                ),
+                Style::new().fg(theme.muted),
+            ),
         ])
     } else if let Some(message) = &app.message {
-        Line::from(vec![" • ".cyan(), message.clone().into()])
-    } else {
         Line::from(vec![
-            " ↑↓/jk 选择 · Enter 播放 · Space 暂停 · / 搜索 · v 频谱 · P 列表 · ? 帮助 · q 退出"
-                .dark_gray(),
+            Span::styled(" • ", Style::new().fg(theme.primary)),
+            Span::styled(message.clone(), Style::new().fg(theme.primary)),
         ])
+    } else {
+        Line::from(Span::styled(
+            " ↑↓/jk 选择 · Enter 播放 · Space 暂停 · / 搜索 · v 频谱 · P 列表 · ? 帮助 · q 退出",
+            Style::new().fg(theme.muted),
+        ))
     };
     frame.render_widget(Paragraph::new(line), area);
 }
 
-fn draw_overlay(frame: &mut Frame, app: &App) {
+fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme) {
     match app.overlay {
         Overlay::None => {}
         Overlay::Help => draw_text_popup(
@@ -340,9 +382,10 @@ fn draw_overlay(frame: &mut Frame, app: &App) {
             ],
             62,
             19,
+            theme,
         ),
-        Overlay::Playlists => draw_playlists(frame, app),
-        Overlay::PlaylistTracks => draw_playlist_tracks(frame, app),
+        Overlay::Playlists => draw_playlists(frame, app, theme),
+        Overlay::PlaylistTracks => draw_playlist_tracks(frame, app, theme),
         Overlay::NameInput => draw_text_popup(
             frame,
             " 新建播放列表 ",
@@ -354,6 +397,7 @@ fn draw_overlay(frame: &mut Frame, app: &App) {
             ],
             58,
             8,
+            theme,
         ),
         Overlay::DeleteConfirm => {
             let name = app
@@ -373,20 +417,27 @@ fn draw_overlay(frame: &mut Frame, app: &App) {
                 ],
                 56,
                 8,
+                theme,
             );
         }
     }
 }
 
-fn draw_playlists(frame: &mut Frame, app: &App) {
+fn draw_playlists(frame: &mut Frame, app: &App, theme: &Theme) {
     let area = centered(frame.area(), 70, 70);
     frame.render_widget(Clear, area);
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .title(" 播放列表 ")
-        .border_style(Style::new().cyan());
+        .title(Span::styled(
+            " 播放列表 ",
+            Style::new().fg(theme.primary).bold(),
+        ))
+        .border_style(Style::new().fg(theme.border));
     let items = if app.playlists.all().is_empty() {
-        vec![ListItem::new("暂无播放列表，按 c 创建".dark_gray())]
+        vec![ListItem::new(Span::styled(
+            "暂无播放列表，按 c 创建",
+            Style::new().fg(theme.muted),
+        ))]
     } else {
         app.playlists
             .all()
@@ -398,8 +449,8 @@ fn draw_playlists(frame: &mut Frame, app: &App) {
     };
     let list = List::new(items)
         .block(block)
-        .highlight_symbol("▸ ")
-        .highlight_style(Style::new().bg(HIGHLIGHT_BG).bold());
+        .highlight_symbol(Span::styled("▸ ", Style::new().fg(theme.primary)))
+        .highlight_style(Style::new().bg(theme.selection_bg).bold());
     let selected = (!app.playlists.all().is_empty()).then_some(app.playlist_selected);
     let mut state = ListState::default().with_selected(selected);
     frame.render_stateful_widget(list, area, &mut state);
@@ -410,12 +461,13 @@ fn draw_playlists(frame: &mut Frame, app: &App) {
         1,
     );
     frame.render_widget(
-        Paragraph::new("c 新建 · a 加入选中歌曲 · Enter 查看 · x 删除 · Esc 关闭").dark_gray(),
+        Paragraph::new("c 新建 · a 加入选中歌曲 · Enter 查看 · x 删除 · Esc 关闭")
+            .style(Style::new().fg(theme.muted)),
         help,
     );
 }
 
-fn draw_playlist_tracks(frame: &mut Frame, app: &App) {
+fn draw_playlist_tracks(frame: &mut Frame, app: &App, theme: &Theme) {
     let area = centered(frame.area(), 78, 76);
     frame.render_widget(Clear, area);
     let Some(playlist) = app.playlists.all().get(app.playlist_selected) else {
@@ -423,8 +475,11 @@ fn draw_playlist_tracks(frame: &mut Frame, app: &App) {
     };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .title(format!(" {} ", playlist.name))
-        .border_style(Style::new().magenta());
+        .title(Span::styled(
+            format!(" {} ", playlist.name),
+            Style::new().fg(theme.primary).bold(),
+        ))
+        .border_style(Style::new().fg(theme.border));
     let items = playlist.tracks.iter().map(|path| {
         let missing = !path.is_file();
         let name = path
@@ -433,9 +488,9 @@ fn draw_playlist_tracks(frame: &mut Frame, app: &App) {
             .unwrap_or("?");
         if missing {
             ListItem::new(Line::from(vec![
-                "⚠ ".red(),
-                name.red(),
-                "  文件不可用".dark_gray(),
+                Span::styled("⚠ ", Style::new().fg(theme.danger)),
+                Span::styled(name, Style::new().fg(theme.danger)),
+                Span::styled("  文件不可用", Style::new().fg(theme.muted)),
             ]))
         } else {
             ListItem::new(name)
@@ -443,8 +498,8 @@ fn draw_playlist_tracks(frame: &mut Frame, app: &App) {
     });
     let list = List::new(items)
         .block(block)
-        .highlight_symbol("▸ ")
-        .highlight_style(Style::new().bg(HIGHLIGHT_BG).bold());
+        .highlight_symbol(Span::styled("▸ ", Style::new().fg(theme.primary)))
+        .highlight_style(Style::new().bg(theme.selection_bg).bold());
     let selected = (!playlist.tracks.is_empty()).then_some(app.playlist_track_selected);
     let mut state = ListState::default().with_selected(selected);
     frame.render_stateful_widget(list, area, &mut state);
@@ -455,22 +510,31 @@ fn draw_playlist_tracks(frame: &mut Frame, app: &App) {
         1,
     );
     frame.render_widget(
-        Paragraph::new("Enter 从此处播放 · d 从列表移除 · Esc 返回").dark_gray(),
+        Paragraph::new("Enter 从此处播放 · d 从列表移除 · Esc 返回")
+            .style(Style::new().fg(theme.muted)),
         help,
     );
 }
 
-fn draw_text_popup(frame: &mut Frame, title: &str, lines: Vec<&str>, width: u16, height: u16) {
+fn draw_text_popup(
+    frame: &mut Frame,
+    title: &str,
+    lines: Vec<&str>,
+    width: u16,
+    height: u16,
+    theme: &Theme,
+) {
     let area = centered(frame.area(), width, height);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(lines.join("\n"))
+            .style(Style::new().fg(theme.primary))
             .wrap(Wrap { trim: false })
             .block(
                 Block::bordered()
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::new().cyan())
-                    .title(title),
+                    .border_style(Style::new().fg(theme.border))
+                    .title(Span::styled(title, Style::new().fg(theme.primary).bold())),
             ),
         area,
     );
@@ -543,8 +607,40 @@ mod tests {
 
     #[test]
     fn playback_icon_describes_the_space_key_action() {
-        assert_eq!(playback_action_indicator(PlayState::Playing).0, "⏸ ");
-        assert_eq!(playback_action_indicator(PlayState::Paused).0, "▶ ");
-        assert_eq!(playback_action_indicator(PlayState::Stopped).0, "■ ");
+        assert_eq!(
+            playback_action_indicator(PlayState::Playing, &DEFAULT_THEME).0,
+            "⏸ "
+        );
+        assert_eq!(
+            playback_action_indicator(PlayState::Paused, &DEFAULT_THEME).0,
+            "▶ "
+        );
+        assert_eq!(
+            playback_action_indicator(PlayState::Stopped, &DEFAULT_THEME).0,
+            "■ "
+        );
+    }
+
+    #[test]
+    fn playback_actions_share_primary_color_and_stopped_is_muted() {
+        let playing = playback_action_indicator(PlayState::Playing, &DEFAULT_THEME).1;
+        let paused = playback_action_indicator(PlayState::Paused, &DEFAULT_THEME).1;
+        let stopped = playback_action_indicator(PlayState::Stopped, &DEFAULT_THEME).1;
+
+        assert_eq!(playing, paused);
+        assert_eq!(playing.fg, Some(DEFAULT_THEME.primary));
+        assert_eq!(stopped.fg, Some(DEFAULT_THEME.muted));
+    }
+
+    #[test]
+    fn spectrum_gradient_uses_theme_endpoints() {
+        assert_eq!(
+            frequency_color(0, 32, &DEFAULT_THEME),
+            Color::Rgb(45, 188, 195)
+        );
+        assert_eq!(
+            frequency_color(31, 32, &DEFAULT_THEME),
+            Color::Rgb(201, 89, 171)
+        );
     }
 }

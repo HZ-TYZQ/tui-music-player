@@ -40,9 +40,11 @@ tar -C "$project_dir" \
     LICENSE \
     README.md \
     changelog.md \
+    assets \
     src \
     tests \
     packaging/music-player.1 \
+    packaging/music-player.desktop \
     packaging/music-player.spec \
     packaging/build-rpm.sh \
     | tar -C "$work_dir/$source_name" -xf -

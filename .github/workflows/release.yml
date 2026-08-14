@@ -37,7 +37,7 @@ jobs:
       - name: Install build tools
         run: |
           dnf install -y \
-            git rust cargo rpm-build tar gzip findutils \
+            git rust cargo rpm-build tar gzip findutils desktop-file-utils \
             gstreamer1-devel \
             gstreamer1-plugins-base-devel \
             gstreamer1-plugins-bad-free-devel \

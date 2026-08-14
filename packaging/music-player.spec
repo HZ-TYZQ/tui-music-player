@@ -10,6 +10,7 @@ Source1:        %{name}-%{version}-vendor.tar.gz
 
 BuildRequires:  cargo
 BuildRequires:  rust
+BuildRequires:  desktop-file-utils
 BuildRequires:  pkgconfig(gstreamer-1.0)
 BuildRequires:  pkgconfig(gstreamer-audio-1.0)
 BuildRequires:  pkgconfig(gstreamer-play-1.0)
@@ -42,16 +43,23 @@ cargo build --release --locked --offline
 %check
 export CARGO_HOME="$PWD/.cargo-home"
 cargo test --release --locked --offline
+desktop-file-validate packaging/%{name}.desktop
 
 %install
 install -Dpm 0755 target/release/%{name} %{buildroot}%{_bindir}/%{name}
 install -Dpm 0644 packaging/%{name}.1 %{buildroot}%{_mandir}/man1/%{name}.1
+install -Dpm 0644 packaging/%{name}.desktop %{buildroot}%{_datadir}/applications/%{name}.desktop
+install -Dpm 0644 assets/icons/%{name}.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/%{name}.svg
+install -Dpm 0644 assets/icons/%{name}-48.png %{buildroot}%{_datadir}/icons/hicolor/48x48/apps/%{name}.png
 
 %files
 %license LICENSE
 %doc README.md changelog.md
 %{_bindir}/%{name}
 %{_mandir}/man1/%{name}.1*
+%{_datadir}/applications/%{name}.desktop
+%{_datadir}/icons/hicolor/scalable/apps/%{name}.svg
+%{_datadir}/icons/hicolor/48x48/apps/%{name}.png
 
 %changelog
 * Fri Aug 14 2026 HZ-TYZQ - 1.0.0-1
