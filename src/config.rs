@@ -58,6 +58,7 @@ pub struct AppConfig {
     pub volume: u8,
     pub muted: bool,
     pub play_mode: PlayMode,
+    pub visualizer_enabled: bool,
 }
 
 impl Default for AppConfig {
@@ -68,6 +69,7 @@ impl Default for AppConfig {
             volume: 100,
             muted: false,
             play_mode: PlayMode::Sequential,
+            visualizer_enabled: true,
         }
     }
 }
@@ -155,6 +157,7 @@ mod tests {
             volume: 75,
             muted: true,
             play_mode: PlayMode::Shuffle,
+            visualizer_enabled: false,
             ..AppConfig::default()
         };
         config.save(&path).unwrap();
@@ -163,10 +166,27 @@ mod tests {
         assert_eq!(loaded.volume, 75);
         assert!(loaded.muted);
         assert_eq!(loaded.play_mode, PlayMode::Shuffle);
+        assert!(!loaded.visualizer_enabled);
 
         fs::write(&path, "version = 1\nvolume = 255\n").unwrap();
         let (loaded, _) = AppConfig::load(&path).unwrap();
         assert_eq!(loaded.volume, 100);
+    }
+
+    #[test]
+    fn old_config_defaults_visualizer_to_enabled() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        fs::write(
+            &path,
+            "version = 1\nvolume = 75\nmuted = false\nplay_mode = \"sequential\"\n",
+        )
+        .unwrap();
+
+        let (loaded, warning) = AppConfig::load(&path).unwrap();
+
+        assert!(warning.is_none());
+        assert!(loaded.visualizer_enabled);
     }
 
     #[test]

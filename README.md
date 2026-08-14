@@ -7,6 +7,7 @@ Music Player 是一个用 Rust 编写的终端音乐库播放器。它使用 GSt
 - 后台递归扫描音乐库，界面不会因大型目录而停止响应
 - 展示标题、歌手、专辑、格式、时长和实时播放进度
 - 播放、平滑暂停、前后跳转、音量和静音
+- 内置实时音频频谱，将 50–8000 Hz 对数映射为最多 32 根柱，并支持记忆开关状态
 - 顺序、列表循环、单曲循环和随机四种播放模式
 - Unicode 友好的实时模糊搜索，覆盖标题、歌手、专辑和相对路径
 - 临时播放队列与持久命名播放列表
@@ -60,6 +61,7 @@ music-player --help
 | `m` | 静音 |
 | `n/p` | 下一首/上一首历史 |
 | `z` | 切换播放模式 |
+| `v` | 显示/隐藏音频频谱 |
 | `/` | 实时模糊搜索 |
 | `r` | 后台重新扫描 |
 | `a/A` | 加到队尾/设为下一首 |
@@ -79,6 +81,10 @@ music-player --help
 
 没有显式设置 XDG 基础目录时，通常对应 `~/.config`、`~/.local/share` 和 `~/.cache`。
 
+频谱默认开启，退出程序时会把 `visualizer_enabled` 与音量、静音等设置一起保存。频谱由 GStreamer `spectrum` 直接分析当前歌曲，不会采集麦克风或其他应用的声音。
+
+播放区域的图标表示按下 `Space` 后将执行的操作：播放中显示 `⏸`，暂停时显示 `▶`。
+
 ## 测试与 RPM
 
 ```sh
@@ -87,7 +93,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test --all-targets --locked
 
 ./packaging/build-rpm.sh
-sudo dnf install ./packaging/rpmbuild/RPMS/x86_64/music-player-0.2.0-1.fc44.x86_64.rpm
+sudo dnf install ./packaging/rpmbuild/RPMS/x86_64/music-player-0.3.0-3.fc44.x86_64.rpm
 ```
 
 RPM 构建脚本会生成离线 vendor 归档、二进制 RPM 和 SRPM。升级使用 `sudo dnf upgrade <RPM 路径>`，卸载使用 `sudo dnf remove music-player`。

@@ -1,6 +1,6 @@
 Name:           music-player
-Version:        0.2.0
-Release:        1%{?dist}
+Version:        0.3.0
+Release:        3%{?dist}
 Summary:        Terminal music library player powered by GStreamer
 
 License:        MIT
@@ -54,6 +54,15 @@ install -Dpm 0644 packaging/%{name}.1 %{buildroot}%{_mandir}/man1/%{name}.1
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Fri Aug 14 2026 HZ-TYZQ - 0.3.0-3
+- Reduce low-frequency visualizer saturation with interpolated sampling and display headroom
+
+* Fri Aug 14 2026 HZ-TYZQ - 0.3.0-2
+- Refine the spectrum to 50-8000 Hz logarithmic bars and action-oriented playback icons
+
+* Fri Aug 14 2026 HZ-TYZQ - 0.3.0-1
+- Add an integrated GStreamer spectrum visualizer with a persistent toggle
+
 * Fri Aug 14 2026 HZ-TYZQ - 0.2.0-1
 - Add GStreamer playback, background library index, search, queue, and playlists
 

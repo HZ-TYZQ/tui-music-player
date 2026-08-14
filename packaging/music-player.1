@@ -1,4 +1,4 @@
-.TH MUSIC-PLAYER 1 "August 2026" "music-player 0.2.0" "User Commands"
+.TH MUSIC-PLAYER 1 "August 2026" "music-player 0.3.0" "User Commands"
 .SH NAME
 music-player \- terminal music library player powered by GStreamer
 .SH SYNOPSIS
@@ -52,6 +52,9 @@ Play the next track or return through actual playback history.
 .B z
 Cycle sequential, repeat-all, repeat-one, and shuffle modes.
 .TP
+.B v
+Show or hide the audio spectrum. The choice is restored on the next launch.
+.TP
 .B /
 Enter live fuzzy search.
 .TP
@@ -72,7 +75,7 @@ Quit.
 .SH FILES
 .TP
 .I $XDG_CONFIG_HOME/tui-music-player/config.toml
-Main library and playback settings.
+Main library, playback, and visualizer settings.
 .TP
 .I $XDG_DATA_HOME/tui-music-player/playlists/*.json
 Independent named playlist files.

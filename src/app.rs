@@ -8,7 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::config::{AppConfig, AppPaths};
 use crate::library::{LibraryEvent, LibraryWorker};
-use crate::player::{Player, PlayerEvent};
+use crate::player::{PlayState, Player, PlayerEvent, SPECTRUM_THRESHOLD_DB};
 use crate::playlist::PlaylistStore;
 use crate::search::SearchIndex;
 use crate::track::{PlayMode, Track};
@@ -22,6 +22,15 @@ pub enum Overlay {
     NameInput,
     DeleteConfirm,
 }
+
+const SPECTRUM_ATTACK: f32 = 0.65;
+const SPECTRUM_DECAY: f32 = 0.18;
+const SPECTRUM_EPSILON: f32 = 0.001;
+const VISUALIZER_BARS: usize = 32;
+const VISUALIZER_MIN_HZ: f32 = 50.0;
+const VISUALIZER_MAX_HZ: f32 = 8_000.0;
+const VISUALIZER_LOW_FREQUENCY_GAIN: f32 = 0.65;
+const VISUALIZER_RESPONSE_GAMMA: f32 = 1.6;
 
 pub struct App {
     pub library_dir: PathBuf,
@@ -43,6 +52,8 @@ pub struct App {
     pub name_input: String,
     pub playlists: PlaylistStore,
     pub config: AppConfig,
+    pub spectrum: Vec<f32>,
+    spectrum_target: Vec<f32>,
     paths: AppPaths,
     library: LibraryWorker,
     rng_state: u64,
@@ -60,6 +71,7 @@ impl App {
         let player = Player::new()?;
         player.set_volume(config.volume);
         player.set_muted(config.muted);
+        player.set_spectrum_enabled(config.visualizer_enabled);
         let playlists = PlaylistStore::load(paths.playlists_dir.clone())
             .map_err(|error| format!("无法打开播放列表目录: {error}"))?;
         let playlist_warning = playlists.warnings().first().cloned();
@@ -84,6 +96,8 @@ impl App {
             name_input: String::new(),
             playlists,
             config,
+            spectrum: vec![0.0; VISUALIZER_BARS],
+            spectrum_target: vec![0.0; VISUALIZER_BARS],
             paths,
             library,
             rng_state: SystemTime::now()
@@ -134,6 +148,7 @@ impl App {
             KeyCode::Char('n') => self.play_next(false),
             KeyCode::Char('p') => self.play_previous(),
             KeyCode::Char('z') => self.cycle_mode(),
+            KeyCode::Char('v') => self.toggle_visualizer(),
             KeyCode::Char('/') => {
                 self.search_active = true;
                 self.message = None;
@@ -200,7 +215,22 @@ impl App {
                     self.play_next(true);
                 }
                 PlayerEvent::StateChanged(_) => {}
+                PlayerEvent::SpectrumFrame {
+                    magnitudes,
+                    sample_rate,
+                } => {
+                    if self.config.visualizer_enabled {
+                        self.spectrum_target = map_spectrum_frame(&magnitudes, sample_rate);
+                    }
+                }
             }
+        }
+
+        if self.player.state() != PlayState::Playing {
+            self.spectrum_target.fill(0.0);
+        }
+        if self.config.visualizer_enabled {
+            animate_spectrum(&mut self.spectrum, &self.spectrum_target);
         }
     }
 
@@ -226,6 +256,7 @@ impl App {
             return false;
         };
         let path = track.path.clone();
+        self.clear_spectrum();
         if remember_current
             && let Some(current) = self.current_track()
             && current.path != path
@@ -365,6 +396,23 @@ impl App {
     fn cycle_mode(&mut self) {
         self.config.play_mode = self.config.play_mode.next();
         self.message = Some(format!("播放模式：{}", self.config.play_mode.label()));
+    }
+
+    fn toggle_visualizer(&mut self) {
+        self.config.visualizer_enabled = !self.config.visualizer_enabled;
+        self.player
+            .set_spectrum_enabled(self.config.visualizer_enabled);
+        if self.config.visualizer_enabled {
+            self.message = Some("已开启音频频谱".to_owned());
+        } else {
+            self.clear_spectrum();
+            self.message = Some("已关闭音频频谱".to_owned());
+        }
+    }
+
+    fn clear_spectrum(&mut self) {
+        self.spectrum.fill(0.0);
+        self.spectrum_target.fill(0.0);
     }
 
     fn handle_search_key(&mut self, code: KeyCode) {
@@ -578,11 +626,78 @@ impl App {
     }
 }
 
+fn map_spectrum_frame(frame: &[f32], sample_rate: u32) -> Vec<f32> {
+    let nyquist = sample_rate as f32 / 2.0;
+    let upper_hz = VISUALIZER_MAX_HZ.min(nyquist);
+    if frame.is_empty() || upper_hz <= VISUALIZER_MIN_HZ {
+        return vec![0.0; VISUALIZER_BARS];
+    }
+
+    let bin_width = nyquist / frame.len() as f32;
+    let frequency_ratio = upper_hz / VISUALIZER_MIN_HZ;
+    (0..VISUALIZER_BARS)
+        .map(|bar| {
+            let lower_hz =
+                VISUALIZER_MIN_HZ * frequency_ratio.powf(bar as f32 / VISUALIZER_BARS as f32);
+            let upper_hz =
+                VISUALIZER_MIN_HZ * frequency_ratio.powf((bar + 1) as f32 / VISUALIZER_BARS as f32);
+            let center_hz = (lower_hz * upper_hz).sqrt();
+            let magnitude = interpolate_magnitude(frame, center_hz / bin_width);
+            let frequency_position = (bar as f32 + 0.5) / VISUALIZER_BARS as f32;
+            let frequency_gain = VISUALIZER_LOW_FREQUENCY_GAIN
+                + (1.0 - VISUALIZER_LOW_FREQUENCY_GAIN) * frequency_position;
+            normalize_magnitude(magnitude).powf(VISUALIZER_RESPONSE_GAMMA) * frequency_gain
+        })
+        .collect()
+}
+
+fn interpolate_magnitude(frame: &[f32], position: f32) -> f32 {
+    let position = position.clamp(0.0, frame.len().saturating_sub(1) as f32);
+    let lower = position.floor() as usize;
+    let upper = position.ceil() as usize;
+    let fraction = position - lower as f32;
+    let magnitude = |index: usize| {
+        if frame[index].is_finite() {
+            frame[index]
+        } else {
+            SPECTRUM_THRESHOLD_DB
+        }
+    };
+    magnitude(lower) + (magnitude(upper) - magnitude(lower)) * fraction
+}
+
+fn normalize_magnitude(magnitude: f32) -> f32 {
+    if magnitude.is_finite() {
+        ((magnitude.clamp(SPECTRUM_THRESHOLD_DB, 0.0) - SPECTRUM_THRESHOLD_DB)
+            / -SPECTRUM_THRESHOLD_DB)
+            .clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+fn animate_spectrum(current: &mut Vec<f32>, target: &[f32]) {
+    current.resize(target.len(), 0.0);
+    for (current, target) in current.iter_mut().zip(target) {
+        let factor = if *target > *current {
+            SPECTRUM_ATTACK
+        } else {
+            SPECTRUM_DECAY
+        };
+        *current += (*target - *current) * factor;
+        if current.abs() < SPECTRUM_EPSILON {
+            *current = 0.0;
+        }
+        *current = current.clamp(0.0, 1.0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crossterm::event::KeyModifiers;
 
     fn test_app(config: AppConfig) -> (tempfile::TempDir, App) {
         let temp = tempfile::tempdir().unwrap();
@@ -655,5 +770,79 @@ mod tests {
         for _ in 0..20 {
             assert_ne!(app.next_library_index(true), Some(2));
         }
+    }
+
+    #[test]
+    fn visualizer_toggle_updates_persisted_setting() {
+        let (_temp, mut app) = test_app(AppConfig::default());
+        assert!(app.config.visualizer_enabled);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
+        assert!(!app.config.visualizer_enabled);
+        assert!(app.spectrum.iter().all(|value| *value == 0.0));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
+        assert!(app.config.visualizer_enabled);
+    }
+
+    #[test]
+    fn visualizer_key_does_not_escape_search_or_overlay_modes() {
+        let (_temp, mut app) = test_app(AppConfig::default());
+        app.search_active = true;
+        app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
+        assert!(app.config.visualizer_enabled);
+        assert_eq!(app.search.query(), "v");
+
+        app.search_active = false;
+        app.overlay = Overlay::Help;
+        app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
+        assert!(app.config.visualizer_enabled);
+        assert_eq!(app.overlay, Overlay::Help);
+    }
+
+    #[test]
+    fn spectrum_normalization_clamps_invalid_and_out_of_range_values() {
+        let normalized =
+            [-90.0, SPECTRUM_THRESHOLD_DB, -30.0, 0.0, 12.0, f32::NAN].map(normalize_magnitude);
+        assert_eq!(normalized, [0.0, 0.0, 0.5, 1.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn spectrum_mapping_uses_logarithmic_50_to_8000_hz_bars() {
+        let sample_rate = 48_000;
+        let bin_width = sample_rate as f32 / 2.0 / 512.0;
+        let mapped_peak = |frequency: f32| {
+            let mut frame = vec![SPECTRUM_THRESHOLD_DB; 512];
+            frame[(frequency / bin_width).floor() as usize] = 0.0;
+            let mapped = map_spectrum_frame(&frame, sample_rate);
+            let strongest_bar = mapped
+                .iter()
+                .enumerate()
+                .max_by(|(_, left), (_, right)| left.total_cmp(right))
+                .map(|(index, _)| index)
+                .unwrap();
+            (strongest_bar, mapped)
+        };
+
+        let (bass_bar, bass) = mapped_peak(100.0);
+        let (treble_bar, _) = mapped_peak(4_000.0);
+        assert!(bass_bar < 8);
+        assert!(treble_bar > 24);
+        assert!(bass_bar < treble_bar);
+        assert!(bass.iter().all(|magnitude| *magnitude < 0.75));
+        assert_eq!(map_spectrum_frame(&[], sample_rate), vec![0.0; 32]);
+    }
+
+    #[test]
+    fn spectrum_animation_attacks_quickly_and_decays_without_leaving_bounds() {
+        let mut current = vec![0.0, 1.0];
+        animate_spectrum(&mut current, &[1.0, 0.0]);
+        assert_eq!(current, vec![SPECTRUM_ATTACK, 1.0 - SPECTRUM_DECAY]);
+        assert!(current.iter().all(|value| (0.0..=1.0).contains(value)));
+
+        for _ in 0..100 {
+            animate_spectrum(&mut current, &[0.0, 0.0]);
+        }
+        assert_eq!(current, vec![0.0, 0.0]);
     }
 }

@@ -11,6 +11,10 @@ use gstreamer as gst;
 use gstreamer::prelude::*;
 use gstreamer_play as gst_play;
 
+pub const SPECTRUM_BANDS: usize = 512;
+const SPECTRUM_INTERVAL_NS: u64 = 50_000_000;
+pub const SPECTRUM_THRESHOLD_DB: f32 = -60.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayState {
     Playing,
@@ -18,17 +22,24 @@ pub enum PlayState {
     Stopped,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PlayerEvent {
     EndOfStream,
     Error(String),
     StateChanged(PlayState),
+    SpectrumFrame {
+        magnitudes: Vec<f32>,
+        sample_rate: u32,
+    },
 }
 
 pub struct Player {
     play: gst_play::Play,
     /// 必须与 `play` 一起存活，否则信号连接会被释放。
     _adapter: gst_play::PlaySignalAdapter,
+    spectrum: gst::Element,
+    spectrum_bus: gst::Bus,
+    spectrum_handler: Option<gst::glib::SignalHandlerId>,
     events: Receiver<PlayerEvent>,
     state: PlayState,
     current_path: Option<PathBuf>,
@@ -54,14 +65,70 @@ impl Player {
         gst::init().map_err(|error| format!("无法初始化 GStreamer: {error}"))?;
 
         let play = gst_play::Play::new(None::<gst_play::PlayVideoRenderer>);
+        let pipeline = play.pipeline();
         if let Some(audio_sink) = audio_sink {
-            play.pipeline().set_property("audio-sink", &audio_sink);
+            pipeline.set_property("audio-sink", &audio_sink);
         }
         play.set_video_track_enabled(false);
         play.set_subtitle_track_enabled(false);
 
+        let spectrum = gst::ElementFactory::make("spectrum")
+            .property("bands", SPECTRUM_BANDS as u32)
+            .property("interval", SPECTRUM_INTERVAL_NS)
+            .property("threshold", SPECTRUM_THRESHOLD_DB as i32)
+            .property("message-magnitude", true)
+            .property("message-phase", false)
+            .property("multi-channel", false)
+            .property("post-messages", true)
+            .build()
+            .map_err(|error| {
+                format!(
+                    "无法创建 GStreamer spectrum 频谱分析器: {error}；请安装 gstreamer1-plugins-good"
+                )
+            })?;
+        pipeline.set_property("audio-filter", &spectrum);
+
         let adapter = gst_play::PlaySignalAdapter::new_sync_emit(&play);
         let (sender, events) = mpsc::channel();
+
+        let spectrum_bus = pipeline
+            .bus()
+            .ok_or_else(|| "GStreamer 播放管线没有消息总线".to_owned())?;
+        spectrum_bus.enable_sync_message_emission();
+        let spectrum_sender = sender.clone();
+        let spectrum_for_messages = spectrum.clone();
+        let spectrum_handler =
+            spectrum_bus.connect_sync_message(Some("element"), move |_, message| {
+                let Some(structure) = message.structure() else {
+                    return;
+                };
+                if structure.name() != "spectrum" {
+                    return;
+                }
+                let Ok(magnitudes) = structure.get::<gst::List>("magnitude") else {
+                    return;
+                };
+                let frame = magnitudes
+                    .iter()
+                    .filter_map(|value| value.get::<f32>().ok())
+                    .collect::<Vec<_>>();
+                let sample_rate = spectrum_for_messages
+                    .static_pad("sink")
+                    .and_then(|pad| pad.current_caps())
+                    .and_then(|caps| {
+                        caps.structure(0)
+                            .and_then(|structure| structure.get::<i32>("rate").ok())
+                    })
+                    .and_then(|rate| u32::try_from(rate).ok());
+                if !frame.is_empty()
+                    && let Some(sample_rate) = sample_rate
+                {
+                    let _ = spectrum_sender.send(PlayerEvent::SpectrumFrame {
+                        magnitudes: frame,
+                        sample_rate,
+                    });
+                }
+            });
 
         let event_sender = sender.clone();
         adapter.connect_end_of_stream(move |_| {
@@ -86,6 +153,9 @@ impl Player {
         Ok(Self {
             play,
             _adapter: adapter,
+            spectrum,
+            spectrum_bus,
+            spectrum_handler: Some(spectrum_handler),
             events,
             state: PlayState::Stopped,
             current_path: None,
@@ -183,6 +253,10 @@ impl Player {
         self.play.is_muted()
     }
 
+    pub fn set_spectrum_enabled(&self, enabled: bool) {
+        self.spectrum.set_property("post-messages", enabled);
+    }
+
     /// 取出目前已经到达的所有异步事件，并同步本地状态快照。
     pub fn drain_events(&mut self) -> Vec<PlayerEvent> {
         let mut drained = Vec::new();
@@ -192,6 +266,7 @@ impl Player {
                     self.state = PlayState::Stopped;
                 }
                 PlayerEvent::StateChanged(state) => self.state = *state,
+                PlayerEvent::SpectrumFrame { .. } => {}
             }
             drained.push(event);
         }
@@ -202,5 +277,9 @@ impl Player {
 impl Drop for Player {
     fn drop(&mut self) {
         self.play.stop();
+        if let Some(handler) = self.spectrum_handler.take() {
+            self.spectrum_bus.disconnect(handler);
+        }
+        self.spectrum_bus.disable_sync_message_emission();
     }
 }

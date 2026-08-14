@@ -83,6 +83,40 @@ fn reports_natural_end_of_stream() {
 }
 
 #[test]
+fn reports_spectrum_frames_from_playing_audio() {
+    let temp = tempfile::tempdir().unwrap();
+    let wav = temp.path().join("spectrum.wav");
+    write_test_wav(&wav, 1.0);
+    let mut player = Player::new_for_tests().unwrap();
+    player.play(&wav).unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut frame = None;
+    while Instant::now() < deadline {
+        frame = player.drain_events().into_iter().find_map(|event| {
+            if let PlayerEvent::SpectrumFrame {
+                magnitudes,
+                sample_rate,
+            } = event
+            {
+                Some((magnitudes, sample_rate))
+            } else {
+                None
+            }
+        });
+        if frame.is_some() {
+            break;
+        }
+        sleep(Duration::from_millis(20));
+    }
+
+    let (frame, sample_rate) = frame.expect("播放音频时应产生频谱事件");
+    assert_eq!(frame.len(), 512);
+    assert_eq!(sample_rate, 8_000);
+    assert!(frame.iter().any(|magnitude| *magnitude > -60.0));
+}
+
+#[test]
 fn missing_file_is_rejected_before_playback() {
     let mut player = Player::new_for_tests().unwrap();
     let error = player

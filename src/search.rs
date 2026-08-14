@@ -85,7 +85,7 @@ impl Default for SearchIndex {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use super::*;
 
@@ -118,12 +118,13 @@ mod tests {
 
     fn assert_search(search: &mut SearchIndex, query: &str, expected: &[usize]) {
         search.set_query(query.to_owned());
-        for _ in 0..1_000 {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
             search.tick();
             if search.results() == expected {
                 return;
             }
-            std::thread::yield_now();
+            std::thread::sleep(Duration::from_millis(1));
         }
         assert_eq!(search.results(), expected);
     }

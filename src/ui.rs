@@ -5,13 +5,16 @@ use std::time::Duration;
 
 use ratatui::prelude::*;
 use ratatui::widgets::{
-    Block, BorderType, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap,
+    Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap,
 };
 
 use crate::app::{App, Overlay};
 use crate::player::PlayState;
 
 const HIGHLIGHT_BG: Color = Color::Rgb(52, 56, 70);
+const BASE_LAYOUT_HEIGHT: u16 = 11;
+const MAX_VISUALIZER_HEIGHT: u16 = 5;
+const MIN_VISUALIZER_HEIGHT: u16 = 2;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -25,16 +28,43 @@ pub fn draw(frame: &mut Frame, app: &App) {
         return;
     }
 
-    let chunks = Layout::vertical([
-        Constraint::Min(6),
-        Constraint::Length(4),
-        Constraint::Length(1),
-    ])
-    .split(area);
-    draw_library(frame, app, chunks[0]);
-    draw_now_playing(frame, app, chunks[1]);
-    draw_footer(frame, app, chunks[2]);
+    let visualizer_height = visualizer_height(area.height, app.config.visualizer_enabled);
+    if visualizer_height == 0 {
+        let chunks = Layout::vertical([
+            Constraint::Min(6),
+            Constraint::Length(4),
+            Constraint::Length(1),
+        ])
+        .split(area);
+        draw_library(frame, app, chunks[0]);
+        draw_now_playing(frame, app, chunks[1]);
+        draw_footer(frame, app, chunks[2]);
+    } else {
+        let chunks = Layout::vertical([
+            Constraint::Min(6),
+            Constraint::Length(visualizer_height),
+            Constraint::Length(4),
+            Constraint::Length(1),
+        ])
+        .split(area);
+        draw_library(frame, app, chunks[0]);
+        draw_visualizer(frame, app, chunks[1]);
+        draw_now_playing(frame, app, chunks[2]);
+        draw_footer(frame, app, chunks[3]);
+    }
     draw_overlay(frame, app);
+}
+
+fn visualizer_height(terminal_height: u16, enabled: bool) -> u16 {
+    if !enabled {
+        return 0;
+    }
+    let available = terminal_height.saturating_sub(BASE_LAYOUT_HEIGHT);
+    if available < MIN_VISUALIZER_HEIGHT {
+        0
+    } else {
+        available.min(MAX_VISUALIZER_HEIGHT)
+    }
 }
 
 fn draw_library(frame: &mut Frame, app: &App, area: Rect) {
@@ -67,11 +97,7 @@ fn draw_library(frame: &mut Frame, app: &App, area: Rect) {
         let track = app.tracks.get(*index)?;
         let current = app.playing_index == Some(*index);
         let (icon, style) = if current {
-            match app.player.state() {
-                PlayState::Playing => ("♪ ", Style::new().green().bold()),
-                PlayState::Paused => ("⏸ ", Style::new().yellow()),
-                PlayState::Stopped => ("■ ", Style::new().dark_gray()),
-            }
+            playback_action_indicator(app.player.state())
         } else {
             ("  ", Style::new())
         };
@@ -117,11 +143,7 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
     let top = Layout::horizontal([Constraint::Min(10), Constraint::Length(30)]).split(rows[0]);
     let now = match app.current_track() {
         Some(track) => {
-            let (icon, style) = match app.player.state() {
-                PlayState::Playing => ("▶ ", Style::new().green().bold()),
-                PlayState::Paused => ("⏸ ", Style::new().yellow().bold()),
-                PlayState::Stopped => ("■ ", Style::new().dark_gray()),
-            };
+            let (icon, style) = playback_action_indicator(app.player.state());
             Line::from(vec![
                 Span::styled(icon, style),
                 Span::styled(track.display_title(), Style::new().white().bold()),
@@ -180,6 +202,96 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
+fn playback_action_indicator(state: PlayState) -> (&'static str, Style) {
+    match state {
+        PlayState::Playing => ("⏸ ", Style::new().yellow().bold()),
+        PlayState::Paused => ("▶ ", Style::new().green().bold()),
+        PlayState::Stopped => ("■ ", Style::new().dark_gray()),
+    }
+}
+
+fn draw_visualizer(frame: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::new().dark_gray())
+        .title(" 频谱 · 50 Hz → 8 kHz ".cyan().bold());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.is_empty() {
+        return;
+    }
+
+    let bar_count = app.spectrum.len().min(usize::from(inner.width).div_ceil(2));
+    let bars = resample_spectrum(&app.spectrum, bar_count);
+    let plot_width = bars.len().saturating_mul(2).saturating_sub(1);
+    let left_padding = (usize::from(inner.width).saturating_sub(plot_width)) / 2;
+    let right_padding = usize::from(inner.width)
+        .saturating_sub(left_padding)
+        .saturating_sub(plot_width);
+    for row in 0..inner.height {
+        let remaining_rows = f32::from(inner.height - row - 1);
+        let mut spans = Vec::with_capacity(bars.len().saturating_mul(2) + 2);
+        spans.push(Span::raw(" ".repeat(left_padding)));
+        for (index, value) in bars.iter().enumerate() {
+            let cell_fill = (value * f32::from(inner.height) - remaining_rows).clamp(0.0, 1.0);
+            spans.push(Span::styled(
+                spectrum_block(cell_fill).to_string(),
+                Style::new().fg(frequency_color(index, bars.len())),
+            ));
+            if index + 1 < bars.len() {
+                spans.push(Span::raw(" "));
+            }
+        }
+        spans.push(Span::raw(" ".repeat(right_padding)));
+        let row_area = Rect::new(inner.x, inner.y + row, inner.width, 1);
+        frame.render_widget(Paragraph::new(Line::from(spans)), row_area);
+    }
+}
+
+fn resample_spectrum(values: &[f32], width: usize) -> Vec<f32> {
+    if values.is_empty() || width == 0 {
+        return Vec::new();
+    }
+
+    (0..width)
+        .map(|column| {
+            let start = column * values.len() / width;
+            let end = ((column + 1) * values.len()).div_ceil(width);
+            values[start..end.max(start + 1).min(values.len())]
+                .iter()
+                .copied()
+                .filter(|value| value.is_finite())
+                .fold(0.0_f32, f32::max)
+                .clamp(0.0, 1.0)
+        })
+        .collect()
+}
+
+fn spectrum_block(fill: f32) -> char {
+    match (fill.clamp(0.0, 1.0) * 8.0).ceil() as u8 {
+        0 => ' ',
+        1 => '▁',
+        2 => '▂',
+        3 => '▃',
+        4 => '▄',
+        5 => '▅',
+        6 => '▆',
+        7 => '▇',
+        _ => '█',
+    }
+}
+
+fn frequency_color(index: usize, count: usize) -> Color {
+    let ratio = if count <= 1 {
+        0.0
+    } else {
+        index as f32 / (count - 1) as f32
+    };
+    let mix =
+        |low: u8, high: u8| (f32::from(low) + (f32::from(high) - f32::from(low)) * ratio) as u8;
+    Color::Rgb(mix(20, 220), mix(210, 70), mix(220, 180))
+}
+
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let line = if app.search_active {
         Line::from(vec![
@@ -196,7 +308,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![" • ".cyan(), message.clone().into()])
     } else {
         Line::from(vec![
-            " ↑↓/jk 选择 · Enter 播放 · Space 暂停 · / 搜索 · a/A 队列 · P 列表 · ? 帮助 · q 退出"
+            " ↑↓/jk 选择 · Enter 播放 · Space 暂停 · / 搜索 · v 频谱 · P 列表 · ? 帮助 · q 退出"
                 .dark_gray(),
         ])
     };
@@ -218,6 +330,7 @@ fn draw_overlay(frame: &mut Frame, app: &App) {
                 "m              静音",
                 "n / p          下一首 / 上一首历史",
                 "z              切换播放模式",
+                "v              显示 / 隐藏音频频谱",
                 "/              实时模糊搜索",
                 "r              后台重新扫描",
                 "a / A          加到队尾 / 设为下一首",
@@ -226,7 +339,7 @@ fn draw_overlay(frame: &mut Frame, app: &App) {
                 "q              退出",
             ],
             62,
-            18,
+            19,
         ),
         Overlay::Playlists => draw_playlists(frame, app),
         Overlay::PlaylistTracks => draw_playlist_tracks(frame, app),
@@ -397,5 +510,41 @@ mod tests {
     fn formats_short_and_long_durations() {
         assert_eq!(fmt_duration(Duration::from_secs(65)), "1:05");
         assert_eq!(fmt_duration(Duration::from_secs(3661)), "1:01:01");
+    }
+
+    #[test]
+    fn visualizer_uses_available_height_without_breaking_base_layout() {
+        assert_eq!(visualizer_height(12, true), 0);
+        assert_eq!(visualizer_height(13, true), 2);
+        assert_eq!(visualizer_height(16, true), 5);
+        assert_eq!(visualizer_height(40, true), 5);
+        assert_eq!(visualizer_height(40, false), 0);
+    }
+
+    #[test]
+    fn spectrum_resampling_handles_narrow_wide_and_invalid_input() {
+        assert_eq!(resample_spectrum(&[0.1, 0.8, 0.3, 0.6], 2), vec![0.8, 0.6]);
+        assert_eq!(
+            resample_spectrum(&[0.25, 0.75], 4),
+            vec![0.25, 0.25, 0.75, 0.75]
+        );
+        assert_eq!(resample_spectrum(&[f32::NAN, 2.0], 2), vec![0.0, 1.0]);
+        assert!(resample_spectrum(&[], 10).is_empty());
+        assert!(resample_spectrum(&[0.5], 0).is_empty());
+    }
+
+    #[test]
+    fn spectrum_blocks_cover_empty_fractional_and_full_cells() {
+        assert_eq!(spectrum_block(0.0), ' ');
+        assert_eq!(spectrum_block(0.01), '▁');
+        assert_eq!(spectrum_block(0.5), '▄');
+        assert_eq!(spectrum_block(1.0), '█');
+    }
+
+    #[test]
+    fn playback_icon_describes_the_space_key_action() {
+        assert_eq!(playback_action_indicator(PlayState::Playing).0, "⏸ ");
+        assert_eq!(playback_action_indicator(PlayState::Paused).0, "▶ ");
+        assert_eq!(playback_action_indicator(PlayState::Stopped).0, "■ ");
     }
 }
