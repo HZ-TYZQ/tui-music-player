@@ -11,6 +11,7 @@ pub struct SearchIndex {
     matcher: Nucleo<usize>,
     query: String,
     results: Vec<usize>,
+    running: bool,
 }
 
 impl SearchIndex {
@@ -19,6 +20,7 @@ impl SearchIndex {
             matcher: Nucleo::new(Config::DEFAULT, Arc::new(|| ()), None, 1),
             query: String::new(),
             results: Vec::new(),
+            running: false,
         }
     }
 
@@ -52,10 +54,15 @@ impl SearchIndex {
 
     pub fn tick(&mut self) -> bool {
         let status = self.matcher.tick(0);
+        self.running = status.running;
         if status.changed {
             self.refresh_results();
         }
         status.changed
+    }
+
+    pub(crate) fn is_running(&self) -> bool {
+        self.running
     }
 
     pub fn results(&self) -> &[usize] {
@@ -71,6 +78,7 @@ impl SearchIndex {
             append,
         );
         let status = self.matcher.tick(0);
+        self.running = status.running;
         if status.changed {
             self.refresh_results();
         }
@@ -152,11 +160,12 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
             search.tick();
-            if search.results() == expected {
+            if !search.is_running() && search.results() == expected {
                 return;
             }
             std::thread::sleep(Duration::from_millis(1));
         }
+        assert!(!search.is_running(), "搜索未在截止时间内完成");
         assert_eq!(search.results(), expected);
     }
 }

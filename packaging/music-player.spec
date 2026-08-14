@@ -1,5 +1,5 @@
 Name:           music-player
-Version:        1.0.0
+Version:        1.0.1
 Release:        1%{?dist}
 Summary:        Terminal music library player powered by GStreamer
 
@@ -62,6 +62,11 @@ install -Dpm 0644 assets/icons/%{name}-48.png %{buildroot}%{_datadir}/icons/hico
 %{_datadir}/icons/hicolor/48x48/apps/%{name}.png
 
 %changelog
+* Sat Aug 15 2026 HZ-TYZQ - 1.0.1-1
+- Add desktop integration and a restrained monochrome terminal theme
+- Preserve the selected track after background rescans with active fuzzy search
+- Try the next track after asynchronous playback errors
+
 * Fri Aug 14 2026 HZ-TYZQ - 1.0.0-1
 - Publish the first stable release with playback, library management, playlists, search, and audio visualization
 - Keep asynchronous Nucleo search results synchronized with matcher snapshots

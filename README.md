@@ -53,6 +53,8 @@ music-player --help
 
 通过 RPM 安装后，也可以在桌面应用菜单中搜索“Music Player”或“音乐播放器”。菜单项会使用桌面环境配置的默认终端启动程序，不要求安装某个特定的终端模拟器。
 
+扫描不会跟随音乐库目录内部的符号链接：目录软链接会被跳过以避免循环，指向音频文件的软链接目前也不会被收录。如果音乐存放在其他位置，请把真实文件或硬链接放进音乐库目录。
+
 ## 按键
 
 | 按键 | 操作 |
@@ -103,7 +105,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test --all-targets --locked
 
 ./packaging/build-rpm.sh
-sudo dnf install ./packaging/rpmbuild/RPMS/x86_64/music-player-1.0.0-1.fc44.x86_64.rpm
+sudo dnf install ./packaging/rpmbuild/RPMS/x86_64/music-player-1.0.1-1.fc44.x86_64.rpm
 ```
 
 RPM 构建脚本会生成离线 vendor 归档、二进制 RPM 和 SRPM。安装后的 RPM 同时提供命令行程序、man 手册、桌面菜单入口、可缩放 SVG 图标和 48 px 兼容图标。升级使用 `sudo dnf upgrade <RPM 路径>`，卸载使用 `sudo dnf remove music-player`。

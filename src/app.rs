@@ -58,6 +58,7 @@ pub struct App {
     library: LibraryWorker,
     rng_state: u64,
     save_config_on_exit: bool,
+    pending_selected_path: Option<PathBuf>,
 }
 
 impl App {
@@ -105,6 +106,7 @@ impl App {
                 .unwrap_or_default()
                 .as_nanos() as u64,
             save_config_on_exit,
+            pending_selected_path: None,
         })
     }
 
@@ -177,24 +179,7 @@ impl App {
                     self.scan_progress = (scanned, found);
                 }
                 LibraryEvent::ScanFinished { tracks, warnings } => {
-                    let current_path = self.player.current_path().map(Path::to_path_buf);
-                    self.tracks = tracks;
-                    self.search.replace_tracks(&self.tracks);
-                    self.selected = 0;
-                    self.playing_index = current_path
-                        .as_ref()
-                        .and_then(|path| self.index_for_path(path));
-                    self.scanning = false;
-                    self.scan_progress = (self.tracks.len(), self.tracks.len());
-                    self.message = if warnings.is_empty() {
-                        Some(format!("扫描完成，共 {} 首歌曲", self.tracks.len()))
-                    } else {
-                        Some(format!(
-                            "扫描完成，共 {} 首歌曲；{} 个文件或目录无法读取",
-                            self.tracks.len(),
-                            warnings.len()
-                        ))
-                    };
+                    self.apply_scan_finished(tracks, warnings);
                 }
                 LibraryEvent::Warning(warning) => self.message = Some(warning),
                 LibraryEvent::Error(error) => {
@@ -205,6 +190,7 @@ impl App {
         }
 
         self.search.tick();
+        self.restore_pending_selection();
         self.clamp_selections();
 
         for event in self.player.drain_events() {
@@ -212,7 +198,8 @@ impl App {
                 PlayerEvent::EndOfStream => self.play_next(true),
                 PlayerEvent::Error(error) => {
                     self.message = Some(format!("播放失败: {error}；正在尝试下一首"));
-                    self.play_next(true);
+                    // 播放错误不是自然结束；单曲循环也应先尝试后续歌曲。
+                    self.play_next(false);
                 }
                 PlayerEvent::StateChanged(_) => {}
                 PlayerEvent::SpectrumFrame {
@@ -232,6 +219,30 @@ impl App {
         if self.config.visualizer_enabled {
             animate_spectrum(&mut self.spectrum, &self.spectrum_target);
         }
+    }
+
+    /// 应用一次完整扫描结果，并按路径尽量保留正在播放与选中的歌曲位置。
+    fn apply_scan_finished(&mut self, tracks: Vec<Track>, warnings: Vec<String>) {
+        let current_path = self.player.current_path().map(Path::to_path_buf);
+        let selected_path = self.selected_track().map(|track| track.path.clone());
+        self.tracks = tracks;
+        self.search.replace_tracks(&self.tracks);
+        self.playing_index = current_path
+            .as_ref()
+            .and_then(|path| self.index_for_path(path));
+        self.pending_selected_path = selected_path;
+        self.restore_pending_selection();
+        self.scanning = false;
+        self.scan_progress = (self.tracks.len(), self.tracks.len());
+        self.message = if warnings.is_empty() {
+            Some(format!("扫描完成，共 {} 首歌曲", self.tracks.len()))
+        } else {
+            Some(format!(
+                "扫描完成，共 {} 首歌曲；{} 个文件或目录无法读取",
+                self.tracks.len(),
+                warnings.len()
+            ))
+        };
     }
 
     pub fn save_settings(&mut self) -> Result<(), String> {
@@ -418,15 +429,18 @@ impl App {
     fn handle_search_key(&mut self, code: KeyCode) {
         match code {
             KeyCode::Esc => {
+                self.cancel_pending_selection_restore();
                 self.search_active = false;
                 self.search.set_query(String::new());
                 self.selected = 0;
             }
             KeyCode::Enter => {
+                self.cancel_pending_selection_restore();
                 self.play_selected();
                 self.search_active = false;
             }
             KeyCode::Backspace => {
+                self.cancel_pending_selection_restore();
                 let mut query = self.search.query().to_owned();
                 query.pop();
                 self.search.set_query(query);
@@ -435,6 +449,7 @@ impl App {
             KeyCode::Down => self.select_next(),
             KeyCode::Up => self.select_previous(),
             KeyCode::Char(character) => {
+                self.cancel_pending_selection_restore();
                 let mut query = self.search.query().to_owned();
                 query.push(character);
                 self.search.set_query(query);
@@ -596,13 +611,36 @@ impl App {
     }
 
     fn select_next(&mut self) {
+        self.cancel_pending_selection_restore();
         if !self.visible_indices().is_empty() {
             self.selected = (self.selected + 1).min(self.visible_indices().len() - 1);
         }
     }
 
     fn select_previous(&mut self) {
+        self.cancel_pending_selection_restore();
         self.selected = self.selected.saturating_sub(1);
+    }
+
+    fn restore_pending_selection(&mut self) {
+        if !self.search.query().is_empty() && self.search.is_running() {
+            return;
+        }
+        let Some(path) = self.pending_selected_path.take() else {
+            return;
+        };
+        self.selected = self
+            .index_for_path(&path)
+            .and_then(|index| {
+                self.visible_indices()
+                    .iter()
+                    .position(|visible| *visible == index)
+            })
+            .unwrap_or(0);
+    }
+
+    fn cancel_pending_selection_restore(&mut self) {
+        self.pending_selected_path = None;
     }
 
     fn clamp_selections(&mut self) {
@@ -694,7 +732,7 @@ fn animate_spectrum(current: &mut Vec<f32>, target: &[f32]) {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use super::*;
     use crossterm::event::KeyModifiers;
@@ -727,6 +765,19 @@ mod tests {
         }
     }
 
+    fn settle_search_and_selection(app: &mut App) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            app.search.tick();
+            app.restore_pending_selection();
+            if !app.search.is_running() && app.pending_selected_path.is_none() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        panic!("搜索和待恢复选择未在截止时间内完成");
+    }
+
     #[test]
     fn playback_modes_choose_expected_library_index() {
         let (_temp, mut app) = test_app(AppConfig::default());
@@ -754,6 +805,141 @@ mod tests {
         app.queue.push_back(queued.clone());
         app.play_selected();
         assert_eq!(app.queue.front(), Some(&queued));
+    }
+
+    #[test]
+    fn rescan_preserves_selected_track_by_path() {
+        let (_temp, mut app) = test_app(AppConfig::default());
+        let paths: Vec<PathBuf> = (0..4)
+            .map(|index| PathBuf::from(format!("/music/{index}.wav")))
+            .collect();
+        app.tracks = paths.iter().map(|path| track(path.clone())).collect();
+        app.search.replace_tracks(&app.tracks);
+        app.selected = 2;
+
+        // 模拟扫描结果顺序打乱：2.wav 挪到最前。
+        let mut rescanned: Vec<Track> = paths.iter().map(|path| track(path.clone())).collect();
+        rescanned.rotate_left(2);
+        app.apply_scan_finished(rescanned, Vec::new());
+
+        assert_eq!(
+            app.selected_track().map(|track| track.path.clone()),
+            Some(paths[2].clone())
+        );
+    }
+
+    #[test]
+    fn rescan_preserves_selected_track_after_active_search_settles() {
+        let (_temp, mut app) = test_app(AppConfig::default());
+        let paths: Vec<PathBuf> = (0..4)
+            .map(|index| PathBuf::from(format!("/music/{index}.wav")))
+            .collect();
+        app.tracks = paths.iter().map(|path| track(path.clone())).collect();
+        app.search.replace_tracks(&app.tracks);
+        app.search.set_query("Song".to_owned());
+        settle_search_and_selection(&mut app);
+        assert_eq!(app.visible_indices(), &[0, 1, 2, 3]);
+        app.selected = 2;
+
+        let mut rescanned: Vec<Track> = paths.iter().map(|path| track(path.clone())).collect();
+        // 2.wav 重扫后位于可见结果第 1 项，确保错误回退到第 0 项无法通过测试。
+        rescanned.rotate_left(1);
+        app.apply_scan_finished(rescanned, Vec::new());
+        settle_search_and_selection(&mut app);
+
+        assert_eq!(app.selected, 1);
+        assert_eq!(
+            app.selected_track().map(|track| track.path.clone()),
+            Some(paths[2].clone())
+        );
+    }
+
+    #[test]
+    fn rescan_falls_back_to_first_match_when_selected_track_stops_matching() {
+        let (_temp, mut app) = test_app(AppConfig::default());
+        let first_path = PathBuf::from("/music/first.wav");
+        let selected_path = PathBuf::from("/music/selected.wav");
+        let mut first = track(first_path.clone());
+        first.title = "Other".to_owned();
+        let mut selected = track(selected_path.clone());
+        selected.title = "Favorite".to_owned();
+        app.tracks = vec![first, selected];
+        app.search.replace_tracks(&app.tracks);
+        app.search.set_query("Favorite".to_owned());
+        settle_search_and_selection(&mut app);
+        assert_eq!(
+            app.selected_track().map(|track| &track.path),
+            Some(&selected_path)
+        );
+
+        let mut replacement_match = track(first_path.clone());
+        replacement_match.title = "Favorite".to_owned();
+        let mut replacement_selected = track(selected_path);
+        replacement_selected.title = "Other".to_owned();
+        app.apply_scan_finished(vec![replacement_match, replacement_selected], Vec::new());
+        settle_search_and_selection(&mut app);
+
+        assert_eq!(app.selected, 0);
+        assert_eq!(
+            app.selected_track().map(|track| &track.path),
+            Some(&first_path)
+        );
+    }
+
+    #[test]
+    fn user_actions_cancel_pending_selection_restore() {
+        let (_temp, mut app) = test_app(AppConfig::default());
+        app.tracks = (0..3)
+            .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
+            .collect();
+        app.search.replace_tracks(&app.tracks);
+
+        app.pending_selected_path = Some(app.tracks[2].path.clone());
+        app.select_next();
+        assert_eq!(app.selected, 1);
+        assert!(app.pending_selected_path.is_none());
+
+        app.pending_selected_path = Some(app.tracks[2].path.clone());
+        app.selected = 2;
+        app.select_previous();
+        assert_eq!(app.selected, 1);
+        assert!(app.pending_selected_path.is_none());
+
+        app.pending_selected_path = Some(app.tracks[2].path.clone());
+        app.handle_search_key(KeyCode::Char('x'));
+        assert!(app.pending_selected_path.is_none());
+
+        app.pending_selected_path = Some(app.tracks[2].path.clone());
+        app.handle_search_key(KeyCode::Backspace);
+        assert!(app.pending_selected_path.is_none());
+
+        app.pending_selected_path = Some(app.tracks[2].path.clone());
+        app.handle_search_key(KeyCode::Esc);
+        assert!(app.pending_selected_path.is_none());
+
+        app.pending_selected_path = Some(app.tracks[2].path.clone());
+        app.handle_search_key(KeyCode::Enter);
+        assert!(app.pending_selected_path.is_none());
+    }
+
+    #[test]
+    fn rescan_resets_selection_when_selected_track_disappears() {
+        let (_temp, mut app) = test_app(AppConfig::default());
+        app.tracks = (0..3)
+            .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
+            .collect();
+        app.search.replace_tracks(&app.tracks);
+        app.selected = 2;
+
+        let replacement = vec![track(PathBuf::from("/music/new.wav"))];
+        app.apply_scan_finished(replacement, Vec::new());
+
+        assert_eq!(app.selected, 0);
+        assert_eq!(
+            app.selected_track().map(|track| track.path.clone()),
+            Some(PathBuf::from("/music/new.wav"))
+        );
+        assert_eq!(app.playing_index, None);
     }
 
     #[test]
