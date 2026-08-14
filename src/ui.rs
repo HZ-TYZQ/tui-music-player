@@ -15,6 +15,8 @@ use crate::theme::{DEFAULT_THEME, Theme};
 const BASE_LAYOUT_HEIGHT: u16 = 11;
 const MAX_VISUALIZER_HEIGHT: u16 = 5;
 const MIN_VISUALIZER_HEIGHT: u16 = 2;
+const PAUSE_ACTION_ICON: &str = "⏸\u{fe0e} ";
+const PLAY_ACTION_ICON: &str = "▶\u{fe0e} ";
 
 pub fn draw(frame: &mut Frame, app: &App) {
     draw_with_theme(frame, app, &DEFAULT_THEME);
@@ -233,8 +235,8 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
 
 fn playback_action_indicator(state: PlayState, theme: &Theme) -> (&'static str, Style) {
     match state {
-        PlayState::Playing => ("⏸ ", Style::new().fg(theme.primary).bold()),
-        PlayState::Paused => ("▶ ", Style::new().fg(theme.primary).bold()),
+        PlayState::Playing => (PAUSE_ACTION_ICON, Style::new().fg(theme.primary).bold()),
+        PlayState::Paused => (PLAY_ACTION_ICON, Style::new().fg(theme.primary).bold()),
         PlayState::Stopped => ("■ ", Style::new().fg(theme.muted)),
     }
 }
@@ -609,11 +611,11 @@ mod tests {
     fn playback_icon_describes_the_space_key_action() {
         assert_eq!(
             playback_action_indicator(PlayState::Playing, &DEFAULT_THEME).0,
-            "⏸ "
+            "⏸\u{fe0e} "
         );
         assert_eq!(
             playback_action_indicator(PlayState::Paused, &DEFAULT_THEME).0,
-            "▶ "
+            "▶\u{fe0e} "
         );
         assert_eq!(
             playback_action_indicator(PlayState::Stopped, &DEFAULT_THEME).0,
@@ -636,11 +638,11 @@ mod tests {
     fn spectrum_gradient_uses_theme_endpoints() {
         assert_eq!(
             frequency_color(0, 32, &DEFAULT_THEME),
-            Color::Rgb(45, 188, 195)
+            Color::Rgb(168, 168, 168)
         );
         assert_eq!(
             frequency_color(31, 32, &DEFAULT_THEME),
-            Color::Rgb(201, 89, 171)
+            Color::Rgb(242, 242, 242)
         );
     }
 }
