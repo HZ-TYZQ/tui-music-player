@@ -24,6 +24,7 @@ impl SearchIndex {
 
     pub fn replace_tracks(&mut self, tracks: &[Track]) {
         self.matcher.restart(true);
+        self.results.clear();
         let injector = self.matcher.injector();
         for (index, track) in tracks.iter().enumerate() {
             let columns = track.searchable_columns();
@@ -34,7 +35,9 @@ impl SearchIndex {
         }
         drop(injector);
         self.reparse(false);
-        self.results = (0..tracks.len()).collect();
+        if self.query.is_empty() {
+            self.results = (0..tracks.len()).collect();
+        }
     }
 
     pub fn set_query(&mut self, query: String) {
@@ -49,13 +52,8 @@ impl SearchIndex {
 
     pub fn tick(&mut self) -> bool {
         let status = self.matcher.tick(0);
-        if status.changed || (!status.running && self.results.is_empty()) {
-            self.results = self
-                .matcher
-                .snapshot()
-                .matched_items(..)
-                .map(|item| *item.data)
-                .collect();
+        if status.changed {
+            self.refresh_results();
         }
         status.changed
     }
@@ -72,7 +70,19 @@ impl SearchIndex {
             Normalization::Smart,
             append,
         );
-        self.matcher.tick(0);
+        let status = self.matcher.tick(0);
+        if status.changed {
+            self.refresh_results();
+        }
+    }
+
+    fn refresh_results(&mut self) {
+        self.results = self
+            .matcher
+            .snapshot()
+            .matched_items(..)
+            .map(|item| *item.data)
+            .collect();
     }
 }
 
@@ -114,6 +124,27 @@ mod tests {
         assert_search(&mut search, "ADELE", &[1]);
         assert_search(&mut search, "萧邦", &[0]);
         assert_search(&mut search, "jay/01", &[0]);
+    }
+
+    #[test]
+    fn replacing_tracks_clears_stale_results_while_query_is_active() {
+        let tracks = vec![
+            track("Hello", "Adele", "25", "adele/hello.flac"),
+            track("夜曲", "周杰伦", "十一月的萧邦", "jay/01.flac"),
+        ];
+        let mut search = SearchIndex::new();
+        search.replace_tracks(&tracks);
+        assert_search(&mut search, "ADELE", &[0]);
+
+        let replacement = vec![track(
+            "Goldberg Variations",
+            "Glenn Gould",
+            "Bach",
+            "gould/goldberg.flac",
+        )];
+        search.replace_tracks(&replacement);
+        assert!(search.results().is_empty());
+        assert_search(&mut search, "BACH", &[0]);
     }
 
     fn assert_search(search: &mut SearchIndex, query: &str, expected: &[usize]) {
