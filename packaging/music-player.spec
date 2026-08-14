@@ -1,6 +1,6 @@
 Name:           music-player
-Version:        0.3.0
-Release:        3%{?dist}
+Version:        1.0.0
+Release:        1%{?dist}
 Summary:        Terminal music library player powered by GStreamer
 
 License:        MIT
@@ -54,6 +54,10 @@ install -Dpm 0644 packaging/%{name}.1 %{buildroot}%{_mandir}/man1/%{name}.1
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Fri Aug 14 2026 HZ-TYZQ - 1.0.0-1
+- Publish the first stable release with playback, library management, playlists, search, and audio visualization
+- Keep asynchronous Nucleo search results synchronized with matcher snapshots
+
 * Fri Aug 14 2026 HZ-TYZQ - 0.3.0-3
 - Reduce low-frequency visualizer saturation with interpolated sampling and display headroom
 

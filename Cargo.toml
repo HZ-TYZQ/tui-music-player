@@ -1,6 +1,6 @@
 [package]
 name = "music-player"
-version = "0.3.0"
+version = "1.0.0"
 edition = "2024"
 description = "A terminal music library player powered by GStreamer"
 license = "MIT"

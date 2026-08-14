@@ -93,7 +93,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test --all-targets --locked
 
 ./packaging/build-rpm.sh
-sudo dnf install ./packaging/rpmbuild/RPMS/x86_64/music-player-0.3.0-3.fc44.x86_64.rpm
+sudo dnf install ./packaging/rpmbuild/RPMS/x86_64/music-player-1.0.0-1.fc44.x86_64.rpm
 ```
 
 RPM 构建脚本会生成离线 vendor 归档、二进制 RPM 和 SRPM。升级使用 `sudo dnf upgrade <RPM 路径>`，卸载使用 `sudo dnf remove music-player`。
