@@ -17,6 +17,7 @@
 - 包内附带 GStreamer 1.28.6 官方许可文本、LGPL 2.1 全文及 HZ-TYZQ 提供对应源码的书面承诺（至少三年）
 - 打包改为校验并复制仓库内的许可资料；官方 GStreamer 安装器本身不会把许可文件装进 runtime 目录
 - 安装器简体中文界面使用随仓库分发的 Inno Setup 非官方翻译（issrc is-6_7_1 精确匹配），不再依赖 choco Inno Setup 不自带的语言文件
+- 打包时清理并断言 stage 中不存在 GStreamer 安装器残留的 unins*.exe/.dat/.msg，避免与应用自身的卸载数据冲突
 
 ### 构建与发行
 
