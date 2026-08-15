@@ -23,7 +23,8 @@ foreach ($required in @(
     $executable,
     (Join-Path $runtime "bin\gst-inspect-1.0.exe"),
     (Join-Path $runtime "lib\gstreamer-1.0"),
-    (Join-Path $project "assets\icons\music-player.ico")
+    (Join-Path $project "assets\icons\music-player.ico"),
+    (Join-Path $project "packaging\windows\ChineseSimplified.isl")
 )) {
     if (-not (Test-Path -LiteralPath $required)) {
         throw "Required packaging input was not found: $required"

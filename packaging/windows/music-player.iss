@@ -38,7 +38,10 @@ RestartApplications=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+; ChineseSimplified is a user-contributed translation that Inno Setup does
+; not bundle with the compiler. It is vendored next to this script, pinned
+; to the issrc "is-6_7_1" tree matching the Inno Setup version used by CI.
+Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 
 [CustomMessages]
 english.AddToPath=Add Music Player to the current user PATH

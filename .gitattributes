@@ -3,3 +3,4 @@
 # normalization so Windows checkouts preserve the exact bytes that the
 # SHA-256 pins in package-windows.ps1 are computed from.
 packaging/windows/licenses/** -text
+packaging/windows/ChineseSimplified.isl -text

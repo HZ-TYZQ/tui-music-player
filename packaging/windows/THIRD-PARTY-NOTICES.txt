@@ -21,6 +21,11 @@ release. See SOURCE-CODE-OFFER.txt for the precise 1.28.6 source
 references and the written commitment of HZ-TYZQ to provide the
 corresponding source code for at least three years.
 
+The installer's Chinese Simplified interface language is provided by
+the user-contributed Inno Setup translation maintained by Zhenghan
+Yang (attribution and source are preserved inside the file), vendored
+at build time from the Inno Setup source repository.
+
 GStreamer project: https://gstreamer.freedesktop.org/
 GStreamer source:  https://gitlab.freedesktop.org/gstreamer/
 
