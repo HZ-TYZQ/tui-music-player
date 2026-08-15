@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 构建与发行
+
+- CI 与 Release 改为从官方 GitHub release（jrsoftware/issrc is-6_7_1）下载 Inno Setup 6.7.1 并校验 SHA-256，替换 chocolatey 安装，消除 runner 预装版本漂移
+
 ## [1.0.2] - 2026-08-15
 
 ### Windows

@@ -76,7 +76,10 @@ jobs:
           path: windows-binary
       - name: Install Inno Setup
         shell: pwsh
-        run: choco install innosetup --version=6.7.1 --yes --no-progress
+        run: >-
+          ./packaging/windows/install-innosetup.ps1
+          -InstallDir "$env:RUNNER_TEMP\innosetup"
+          -ExportGitHubEnvironment
       - name: Install private GStreamer runtime
         shell: pwsh
         run: >-
