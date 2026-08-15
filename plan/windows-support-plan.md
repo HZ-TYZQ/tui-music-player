@@ -1,6 +1,6 @@
 # Windows 11 x86_64 MSVC 支持计划
 
-状态：本地实施与 Linux 验证完成，等待 Windows CI
+状态：Linux/RPM 与 Windows MSVC CI 已通过，等待带 tag 的发行打包验证
 日期：2026-08-15
 
 ## 目标
