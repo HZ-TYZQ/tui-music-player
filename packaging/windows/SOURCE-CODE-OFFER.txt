@@ -1,0 +1,115 @@
+Written Offer for GStreamer Corresponding Source Code
+=====================================================
+
+This package ("Music Player" for Windows, published by HZ-TYZQ)
+contains an unmodified private runtime distribution of GStreamer
+1.28.6 (official MSVC x86_64 build produced by the GStreamer Cerbero
+build system). GStreamer is distributed under the GNU Lesser General
+Public License version 2.1 and additional compatible licenses, as
+described in the official GStreamer 1.28.6 license text included in
+this package (third-party-licenses\gstreamer-1.28.6-license.txt; the
+full text of the GNU LGPL 2.1 is provided alongside it as
+third-party-licenses\LGPL-2.1.txt).
+
+Precise source references for GStreamer 1.28.6
+----------------------------------------------
+The complete corresponding machine-readable source code of the
+GStreamer 1.28.6 binaries in this package is the source of the
+following exact revisions:
+
+- GStreamer monorepo source archive, tag 1.28.6 (contains all
+  GStreamer modules built into the runtime):
+  https://gitlab.freedesktop.org/gstreamer/gstreamer/-/archive/1.28.6/gstreamer-1.28.6.tar.bz2
+
+- GStreamer release tag browser:
+  https://gitlab.freedesktop.org/gstreamer/gstreamer/-/tags/1.28.6
+
+- Per-module release tarballs:
+  https://gstreamer.freedesktop.org/src/gstreamer/gstreamer-1.28.6.tar.xz
+  (sibling modules of the same 1.28.6 release, e.g. gst-plugins-base,
+  gst-plugins-good, gst-plugins-bad, are published in the same
+  directory layout under https://gstreamer.freedesktop.org/src/)
+
+- Cerbero build recipes, tag 1.28.6 (defines the exact package and
+  dependency versions used to produce the official runtime installer
+  this package redistributes):
+  https://gitlab.freedesktop.org/gstreamer/cerbero/-/archive/1.28.6/cerbero-1.28.6.tar.bz2
+  https://gitlab.freedesktop.org/gstreamer/cerbero/-/tree/1.28.6
+
+Written commitment (source code offer)
+--------------------------------------
+HZ-TYZQ, the distributor of this package, hereby offers, valid for at
+least three (3) years from the date this package was distributed to
+you, to give any recipient of this package or the offer itself a
+complete machine-readable copy of the corresponding source code of
+the GStreamer 1.28.6 binaries contained in this package, as
+identified by the exact revisions listed above, at no charge beyond
+the reasonable cost of physically performing source distribution
+(for example, the cost of a storage medium or network transmission).
+
+To request the source code, contact:
+
+  E-mail:  Hh20070324@163.com
+  Issues:  https://github.com/HZ-TYZQ/tui-music-player/issues
+
+Please mention "GStreamer 1.28.6 source code request" and the version
+of the Music Player package you received.
+
+This written offer is made in addition to, and does not restrict, the
+freedoms granted by the GNU LGPL 2.1 and the other licenses under
+which GStreamer is distributed. Music Player itself is licensed under
+the MIT License; see the LICENSE file in this package.
+
+=====================================================================
+
+GStreamer 对应源码书面提供承诺（中文对照）
+=============================================
+
+本软件包（HZ-TYZQ 发布的 Windows 版 "Music Player"）包含一份未修改的
+GStreamer 1.28.6 私有运行时（由 GStreamer 官方 Cerbero 构建系统生成的
+MSVC x86_64 版本）。GStreamer 以 GNU 宽通用公共许可证 2.1 版（LGPL 2.1）
+及若干兼容许可证分发，具体以包内附带的官方 GStreamer 1.28.6 许可文本为准
+（third-party-licenses\gstreamer-1.28.6-license.txt；GNU LGPL 2.1 全文见
+third-party-licenses\LGPL-2.1.txt）。
+
+GStreamer 1.28.6 的精确源码位置
+--------------------------------
+本软件包中 GStreamer 1.28.6 二进制文件的完整对应机器可读源码，即下列精确
+修订版本对应的源码：
+
+- GStreamer 单仓库源码归档，tag 1.28.6（涵盖运行时包含的全部 GStreamer
+  模块）：
+  https://gitlab.freedesktop.org/gstreamer/gstreamer/-/archive/1.28.6/gstreamer-1.28.6.tar.bz2
+
+- GStreamer 发布 tag 浏览页：
+  https://gitlab.freedesktop.org/gstreamer/gstreamer/-/tags/1.28.6
+
+- 各模块发布 tarball：
+  https://gstreamer.freedesktop.org/src/gstreamer/gstreamer-1.28.6.tar.xz
+  （同一 1.28.6 发布中的其他模块，如 gst-plugins-base、
+  gst-plugins-good、gst-plugins-bad 等，发布在
+  https://gstreamer.freedesktop.org/src/ 下的同名目录结构中）
+
+- Cerbero 构建配置，tag 1.28.6（定义了官方运行时安装器中各软件包及依赖
+  的精确版本，本软件包再分发的正是该安装器的内容）：
+  https://gitlab.freedesktop.org/gstreamer/cerbero/-/archive/1.28.6/cerbero-1.28.6.tar.bz2
+  https://gitlab.freedesktop.org/gstreamer/cerbero/-/tree/1.28.6
+
+书面承诺（源码提供）
+--------------------
+本软件包的分发者 HZ-TYZQ 在此承诺：自本软件包分发给您之日起至少三 (3)
+年内，向本软件包或本承诺的任何接收者免费提供本软件包所含 GStreamer
+1.28.6 二进制文件的完整机器可读对应源码（即上述精确修订版本对应的源码），
+仅可收取实际执行源码分发的合理成本（例如存储介质或网络传输的费用）。
+
+索取源码请联系：
+
+  电子邮箱：Hh20070324@163.com
+  问题跟踪：https://github.com/HZ-TYZQ/tui-music-player/issues
+
+请在来信中注明“GStreamer 1.28.6 源码索取”及您所收到 Music Player 软件
+包的版本号。
+
+本书面承诺是对 GNU LGPL 2.1 及 GStreamer 其他分发许可证所授予自由的补
+充，不对其构成限制。Music Player 本身以 MIT 许可证分发，见包内 LICENSE
+文件。

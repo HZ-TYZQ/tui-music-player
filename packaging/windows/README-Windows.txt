@@ -26,6 +26,13 @@ Music Player for Windows 11 x86_64
 本发行包已经私有携带 GStreamer runtime，SQLite 也已编入程序。
 用户不需要另外安装 GStreamer 或 SQLite，也不应把包内的 DLL 单独移动出去。
 
+许可与源码
+----------
+
+包内附带 GStreamer 1.28.6 官方许可文本与 LGPL 2.1 全文（见
+third-party-licenses 目录），以及 HZ-TYZQ 提供对应源码的书面承诺，详见
+THIRD-PARTY-NOTICES.txt 与 SOURCE-CODE-OFFER.txt。
+
 安全提示
 --------
 

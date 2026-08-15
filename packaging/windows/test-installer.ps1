@@ -27,6 +27,21 @@ function Test-PathEntry([string] $PathValue, [string] $Expected) {
     return [bool]($PathValue.Split(';') | Where-Object { (Normalize-PathEntry $_) -eq $normalized })
 }
 
+function Test-LicenseMaterial([string] $Directory) {
+    $required = @(
+        (Join-Path $Directory "LICENSE"),
+        (Join-Path $Directory "THIRD-PARTY-NOTICES.txt"),
+        (Join-Path $Directory "SOURCE-CODE-OFFER.txt"),
+        (Join-Path $Directory "third-party-licenses\gstreamer-1.28.6-license.txt"),
+        (Join-Path $Directory "third-party-licenses\LGPL-2.1.txt")
+    )
+    foreach ($file in $required) {
+        if (-not (Test-Path -LiteralPath $file)) {
+            throw "Installed package is missing required license material: $file"
+        }
+    }
+}
+
 function Invoke-Setup([string] $Installer, [string] $Directory, [switch] $AddToPath) {
     $arguments = @(
         "/CURRENTUSER",
@@ -67,6 +82,7 @@ Invoke-Setup -Installer $setup -Directory $installDir
 if ((Get-UserPath) -ne $pathBefore) {
     throw "The default installation unexpectedly changed the user PATH"
 }
+Test-LicenseMaterial -Directory $installDir
 & (Join-Path $installDir "music-player.cmd") --version
 if ($LASTEXITCODE -ne 0) {
     throw "Default installation launcher failed"
@@ -93,6 +109,7 @@ Invoke-Setup -Installer $setup -Directory $installDir -AddToPath
 if (-not (Test-PathEntry (Get-UserPath) $installDir)) {
     throw "The add-to-PATH task did not add the installation directory"
 }
+Test-LicenseMaterial -Directory $installDir
 & (Join-Path $installDir "music-player.cmd") --version
 if ($LASTEXITCODE -ne 0) {
     throw "PATH-enabled installation launcher failed"

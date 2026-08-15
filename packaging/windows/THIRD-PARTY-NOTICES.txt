@@ -1,11 +1,25 @@
 Third-party notices
 ===================
 
-This package includes an unmodified private runtime distribution of GStreamer.
-GStreamer is an LGPL-licensed multimedia framework and its binary distribution
-contains components under additional compatible licenses. The corresponding
-license and notice files supplied by the official GStreamer runtime are kept in
-this package's runtime directory, including its share subdirectories.
+This package includes an unmodified private runtime distribution of
+GStreamer 1.28.6 (the official MSVC x86_64 build produced by the
+GStreamer Cerbero build system). GStreamer is an LGPL-licensed
+multimedia framework and its binary distribution contains components
+under additional compatible licenses.
+
+License texts included in this package:
+
+- The official GStreamer 1.28.6 license text published with the
+  runtime installer:
+  third-party-licenses\gstreamer-1.28.6-license.txt
+- The full text of the GNU Lesser General Public License version 2.1:
+  third-party-licenses\LGPL-2.1.txt
+
+Because the GStreamer runtime is redistributed unmodified, the
+corresponding source code is the source of the official 1.28.6
+release. See SOURCE-CODE-OFFER.txt for the precise 1.28.6 source
+references and the written commitment of HZ-TYZQ to provide the
+corresponding source code for at least three years.
 
 GStreamer project: https://gstreamer.freedesktop.org/
 GStreamer source:  https://gitlab.freedesktop.org/gstreamer/

@@ -30,11 +30,39 @@ foreach ($required in @(
     }
 }
 
-$runtimeLicense = Get-ChildItem -LiteralPath $runtime -Recurse -File |
-    Where-Object { $_.Name -match '^(?i:copying|license|notice)' } |
-    Select-Object -First 1
-if (-not $runtimeLicense) {
-    throw "The GStreamer runtime does not contain discoverable license or notice files"
+# The official GStreamer installer only presents license text in its setup
+# wizard; it does not install license files into the runtime directory.
+# LGPL redistribution compliance is therefore satisfied by shipping the
+# license material vendored in this repository together with the written
+# source-code offer, not by requiring files inside the runtime itself.
+# Must match $gstreamerVersion in install-gstreamer.ps1.
+$gstreamerVersion = "1.28.6"
+$gstreamerLicenseName = "gstreamer-$gstreamerVersion-license.txt"
+$thirdPartyLicenses = Join-Path $project "packaging\windows\licenses"
+$licenseMaterial = @(
+    @{
+        Source = Join-Path $thirdPartyLicenses $gstreamerLicenseName
+        Sha256 = "f51aa9a8dfb17946d14fee32d17045adee466a82b97beedc6c2f47d0f13ad5b0"
+    },
+    @{
+        Source = Join-Path $thirdPartyLicenses "LGPL-2.1.txt"
+        Sha256 = "20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95"
+    },
+    @{
+        Source = Join-Path $project "packaging\windows\SOURCE-CODE-OFFER.txt"
+        Sha256 = $null
+    }
+)
+foreach ($item in $licenseMaterial) {
+    if (-not (Test-Path -LiteralPath $item.Source)) {
+        throw "Required license material was not found: $($item.Source)"
+    }
+    if ($item.Sha256) {
+        $actualSha256 = (Get-FileHash -LiteralPath $item.Source -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualSha256 -ne $item.Sha256) {
+            throw "License material SHA-256 mismatch for $($item.Source): expected $($item.Sha256), got $actualSha256"
+        }
+    }
 }
 
 if (Test-Path -LiteralPath $stageRoot) {
@@ -50,6 +78,24 @@ Copy-Item -LiteralPath (Join-Path $project "packaging\windows\README-Windows.txt
 Copy-Item -LiteralPath (Join-Path $project "packaging\windows\THIRD-PARTY-NOTICES.txt") -Destination $stageRoot
 Copy-Item -LiteralPath (Join-Path $project "assets\icons\music-player.ico") -Destination $stageRoot
 Copy-Item -LiteralPath (Join-Path $project "LICENSE") -Destination $stageRoot
+
+$stageLicenses = Join-Path $stageRoot "third-party-licenses"
+New-Item -ItemType Directory -Force -Path $stageLicenses | Out-Null
+Copy-Item -LiteralPath (Join-Path $thirdPartyLicenses $gstreamerLicenseName) -Destination $stageLicenses
+Copy-Item -LiteralPath (Join-Path $thirdPartyLicenses "LGPL-2.1.txt") -Destination $stageLicenses
+Copy-Item -LiteralPath (Join-Path $project "packaging\windows\SOURCE-CODE-OFFER.txt") -Destination $stageRoot
+
+foreach ($required in @(
+    (Join-Path $stageRoot "LICENSE"),
+    (Join-Path $stageRoot "THIRD-PARTY-NOTICES.txt"),
+    (Join-Path $stageRoot "SOURCE-CODE-OFFER.txt"),
+    (Join-Path $stageLicenses $gstreamerLicenseName),
+    (Join-Path $stageLicenses "LGPL-2.1.txt")
+)) {
+    if (-not (Test-Path -LiteralPath $required)) {
+        throw "Staged package is missing required license material: $required"
+    }
+}
 
 $oldPath = $env:PATH
 $oldPluginSystemPath = $env:GST_PLUGIN_SYSTEM_PATH_1_0

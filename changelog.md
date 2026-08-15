@@ -14,6 +14,8 @@
 - Installer 默认当前用户安装，并提供默认关闭的用户 PATH 选项
 - Portable ZIP 免安装，但配置、播放列表和缓存继续使用 Windows 标准 AppData 目录
 - Windows 发行包暂不进行 Authenticode 签名，Release 提供统一 SHA-256 校验文件
+- 包内附带 GStreamer 1.28.6 官方许可文本、LGPL 2.1 全文及 HZ-TYZQ 提供对应源码的书面承诺（至少三年）
+- 打包改为校验并复制仓库内的许可资料；官方 GStreamer 安装器本身不会把许可文件装进 runtime 目录
 
 ### 构建与发行
 
