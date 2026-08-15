@@ -1,5 +1,5 @@
 Name:           music-player
-Version:        1.0.1
+Version:        1.0.2
 Release:        1%{?dist}
 Summary:        Terminal music library player powered by GStreamer
 
@@ -64,6 +64,11 @@ install -Dpm 0644 assets/icons/%{name}-48.png %{buildroot}%{_datadir}/icons/hico
 %{_datadir}/icons/hicolor/48x48/apps/%{name}.png
 
 %changelog
+* Sat Aug 15 2026 HZ-TYZQ - 1.0.2-1
+- Add Windows 11 x86_64 MSVC builds, tests, and release packaging
+- Bundle a private GStreamer runtime and SQLite in Windows packages
+- Keep Fedora linked to its system GStreamer and SQLite libraries
+
 * Sat Aug 15 2026 HZ-TYZQ - 1.0.1-1
 - Add desktop integration and a restrained monochrome terminal theme
 - Preserve the selected track after background rescans with active fuzzy search

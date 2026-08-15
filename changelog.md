@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-08-15
+
 ### Windows
 
 - 新增 Windows 11 x86_64 MSVC 编译和测试工作流
