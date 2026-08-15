@@ -20,6 +20,8 @@
 
 ### 构建与发行
 
+- 普通 CI（master 推送与 PR）即编译 Installer 与 Portable ZIP 并验证安装/卸载，不再只在 tag 构建时执行
+
 - Release 改为 Fedora RPM 与 Windows 包全部构建成功后统一发布
 - GitHub Actions 更新为 Node.js 24 兼容版本
 - 新增 Windows Unicode 路径、配置覆盖和安装器 PATH 行为验证

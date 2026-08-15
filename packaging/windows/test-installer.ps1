@@ -65,10 +65,28 @@ function Invoke-Uninstall([string] $Directory) {
     if (-not $uninstaller) {
         throw "Uninstaller was not found in $Directory"
     }
-    $process = Start-Process -FilePath $uninstaller.FullName -ArgumentList @(
-        "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
-    ) -Wait -PassThru
+    $temporaryRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
+    $logFile = Join-Path $temporaryRoot "music-player-uninstall.log"
+    if (Test-Path -LiteralPath $logFile) {
+        Remove-Item -LiteralPath $logFile -Force
+    }
+    $arguments = @(
+        "/VERYSILENT",
+        "/SUPPRESSMSGBOXES",
+        "/NORESTART",
+        "/LOG=`"$logFile`""
+    )
+    $process = Start-Process -FilePath $uninstaller.FullName -ArgumentList $arguments -Wait -PassThru
     if ($process.ExitCode -ne 0) {
+        if (Test-Path -LiteralPath $logFile) {
+            Write-Host "----- uninstaller log ($logFile) -----"
+            Get-Content -LiteralPath $logFile |
+                Select-Object -Last 60 |
+                ForEach-Object { Write-Host $_ }
+            Write-Host "----- end of uninstaller log -----"
+        } else {
+            Write-Host "The uninstaller produced no log file at $logFile"
+        }
         throw "Uninstaller exited with code $($process.ExitCode)"
     }
 }
