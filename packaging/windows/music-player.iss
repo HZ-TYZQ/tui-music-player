@@ -74,19 +74,32 @@ end;
 
 function PathContains(CurrentPath, Directory: String): Boolean;
 var
-  Entries: TArrayOfString;
-  Index: Integer;
+  Rest, Entry: String;
+  SeparatorPos: Integer;
   Target: String;
 begin
   Result := False;
   Target := NormalizePath(Directory);
-  Entries := SplitString(CurrentPath, ';');
-  for Index := 0 to GetArrayLength(Entries) - 1 do
-    if NormalizePath(Entries[Index]) = Target then
+  Rest := CurrentPath;
+  while Length(Rest) > 0 do
+  begin
+    SeparatorPos := Pos(';', Rest);
+    if SeparatorPos > 0 then
+    begin
+      Entry := Copy(Rest, 1, SeparatorPos - 1);
+      Delete(Rest, 1, SeparatorPos);
+    end
+    else
+    begin
+      Entry := Rest;
+      Rest := '';
+    end;
+    if NormalizePath(Entry) = Target then
     begin
       Result := True;
       Exit;
     end;
+  end;
 end;
 
 function AddToUserPath(Directory: String): Boolean;
@@ -107,18 +120,28 @@ end;
 
 procedure RemoveFromUserPath(Directory: String);
 var
-  CurrentPath, NewPath, Entry, Target: String;
-  Entries: TArrayOfString;
-  Index: Integer;
+  CurrentPath, NewPath, Entry, Rest, Target: String;
+  SeparatorPos: Integer;
 begin
   if not RegQueryStringValue(HKCU, 'Environment', 'Path', CurrentPath) then
     Exit;
   Target := NormalizePath(Directory);
   NewPath := '';
-  Entries := SplitString(CurrentPath, ';');
-  for Index := 0 to GetArrayLength(Entries) - 1 do
+  Rest := CurrentPath;
+  while Length(Rest) > 0 do
   begin
-    Entry := Trim(Entries[Index]);
+    SeparatorPos := Pos(';', Rest);
+    if SeparatorPos > 0 then
+    begin
+      Entry := Copy(Rest, 1, SeparatorPos - 1);
+      Delete(Rest, 1, SeparatorPos);
+    end
+    else
+    begin
+      Entry := Rest;
+      Rest := '';
+    end;
+    Entry := Trim(Entry);
     if (Entry <> '') and (NormalizePath(Entry) <> Target) then
     begin
       if NewPath <> '' then
