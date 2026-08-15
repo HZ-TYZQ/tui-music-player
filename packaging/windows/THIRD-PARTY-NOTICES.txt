@@ -1,0 +1,13 @@
+Third-party notices
+===================
+
+This package includes an unmodified private runtime distribution of GStreamer.
+GStreamer is an LGPL-licensed multimedia framework and its binary distribution
+contains components under additional compatible licenses. The corresponding
+license and notice files supplied by the official GStreamer runtime are kept in
+this package's runtime directory, including its share subdirectories.
+
+GStreamer project: https://gstreamer.freedesktop.org/
+GStreamer source:  https://gitlab.freedesktop.org/gstreamer/
+
+Music Player itself is licensed under the MIT License; see LICENSE.

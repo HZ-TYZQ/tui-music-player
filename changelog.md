@@ -2,6 +2,29 @@
 
 本项目所有新增的依赖/库都会记录在此文件中。
 
+## [Unreleased]
+
+### Windows
+
+- 新增 Windows 11 x86_64 MSVC 编译和测试工作流
+- 新增携带完整官方 GStreamer runtime 的 Inno Setup Installer 与 Portable ZIP
+- Windows 使用内置 SQLite，不要求用户安装 GStreamer 或 SQLite
+- Installer 默认当前用户安装，并提供默认关闭的用户 PATH 选项
+- Portable ZIP 免安装，但配置、播放列表和缓存继续使用 Windows 标准 AppData 目录
+- Windows 发行包暂不进行 Authenticode 签名，Release 提供统一 SHA-256 校验文件
+
+### 构建与发行
+
+- Release 改为 Fedora RPM 与 Windows 包全部构建成功后统一发布
+- GitHub Actions 更新为 Node.js 24 兼容版本
+- 新增 Windows Unicode 路径、配置覆盖和安装器 PATH 行为验证
+
+### 依赖
+
+- `rusqlite` 启用 `bundled-windows` 特性；只在 Windows 内置 SQLite，Linux 仍使用系统 SQLite
+- Windows 打包使用 Inno Setup 6.7.1；它只用于 CI 生成安装程序，不是应用运行依赖
+- Windows 私有 runtime 固定为 GStreamer 1.28.6 MSVC x86_64
+
 ## [1.0.1] - 2026-08-15
 
 ### 修复

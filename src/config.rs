@@ -1,4 +1,4 @@
-//! XDG 路径和用户配置。
+//! 平台标准路径和用户配置。
 
 use std::fs;
 use std::io::{self, Write};
@@ -22,9 +22,9 @@ pub struct AppPaths {
 
 impl AppPaths {
     pub fn discover() -> io::Result<Self> {
-        let config = dirs::config_dir().ok_or_else(|| missing_dir("XDG_CONFIG_HOME"))?;
-        let data = dirs::data_dir().ok_or_else(|| missing_dir("XDG_DATA_HOME"))?;
-        let cache = dirs::cache_dir().ok_or_else(|| missing_dir("XDG_CACHE_HOME"))?;
+        let config = dirs::config_dir().ok_or_else(|| missing_dir("配置"))?;
+        let data = dirs::data_dir().ok_or_else(|| missing_dir("应用数据"))?;
+        let cache = dirs::cache_dir().ok_or_else(|| missing_dir("缓存"))?;
         Ok(Self::from_roots(config, data, cache, dirs::audio_dir()))
     }
 
@@ -46,7 +46,7 @@ impl AppPaths {
 fn missing_dir(name: &str) -> io::Error {
     io::Error::new(
         io::ErrorKind::NotFound,
-        format!("系统没有提供 {name} 对应的用户目录"),
+        format!("系统没有提供{name}用户目录"),
     )
 }
 
@@ -171,6 +171,23 @@ mod tests {
         fs::write(&path, "version = 1\nvolume = 255\n").unwrap();
         let (loaded, _) = AppConfig::load(&path).unwrap();
         assert_eq!(loaded.volume, 100);
+    }
+
+    #[test]
+    fn config_can_replace_an_existing_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config/config.toml");
+        let mut config = AppConfig::default();
+        config.save(&path).unwrap();
+
+        config.volume = 42;
+        config.library_dir = Some(PathBuf::from(r"C:\Users\测试 用户\Music"));
+        config.save(&path).unwrap();
+
+        let (loaded, warning) = AppConfig::load(&path).unwrap();
+        assert!(warning.is_none());
+        assert_eq!(loaded.volume, 42);
+        assert_eq!(loaded.library_dir, config.library_dir);
     }
 
     #[test]

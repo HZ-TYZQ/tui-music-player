@@ -49,10 +49,10 @@ fn run_application() -> Result<(), String> {
         })?
     } else {
         let path = paths.default_music_dir.as_ref().ok_or_else(|| {
-            "系统没有提供 XDG Music 目录，请使用 --set-library PATH 设置主音乐库".to_owned()
+            "系统没有提供默认 Music 目录，请使用 --set-library PATH 设置主音乐库".to_owned()
         })?;
         validate_directory(path).map_err(|error| {
-            format!("默认 XDG Music 目录不可用: {error}。请使用 --set-library PATH 设置主音乐库")
+            format!("默认 Music 目录不可用: {error}。请使用 --set-library PATH 设置主音乐库")
         })?
     };
 

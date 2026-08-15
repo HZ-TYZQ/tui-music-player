@@ -125,3 +125,17 @@ fn missing_file_is_rejected_before_playback() {
     assert!(error.contains("不存在"));
     assert_eq!(player.state(), PlayState::Stopped);
 }
+
+#[test]
+fn plays_audio_from_a_unicode_path_with_spaces() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("测试 音乐");
+    fs::create_dir(&directory).unwrap();
+    let wav = directory.join("示例 音频.wav");
+    write_test_wav(&wav, 0.2);
+
+    let mut player = Player::new_for_tests().unwrap();
+    player.play(&wav).expect("GStreamer 应能加载 Unicode 路径");
+    assert_eq!(player.state(), PlayState::Playing);
+    player.stop();
+}

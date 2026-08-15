@@ -6,10 +6,10 @@ on:
   pull_request:
 
 jobs:
-  test:
+  linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install native dependencies
         run: |
           sudo apt-get update
@@ -25,6 +25,27 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --all-targets --locked
+
+  windows-msvc:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - name: Install GStreamer MSVC development files
+        shell: pwsh
+        run: >-
+          ./packaging/windows/install-gstreamer.ps1
+          -InstallDir "$env:RUNNER_TEMP\gstreamer"
+          -InstallType devel
+          -ExportGitHubEnvironment
       - name: Lint
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Test

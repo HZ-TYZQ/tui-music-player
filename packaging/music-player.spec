@@ -36,17 +36,19 @@ tar -xzf %{SOURCE1}
 
 %build
 export CARGO_HOME="$PWD/.cargo-home"
+export CARGO_TARGET_DIR="$PWD/.cargo-target"
 mkdir -p "$CARGO_HOME"
 cp vendor-config.toml "$CARGO_HOME/config.toml"
 cargo build --release --locked --offline
 
 %check
 export CARGO_HOME="$PWD/.cargo-home"
+export CARGO_TARGET_DIR="$PWD/.cargo-target"
 cargo test --release --locked --offline
 desktop-file-validate packaging/%{name}.desktop
 
 %install
-install -Dpm 0755 target/release/%{name} %{buildroot}%{_bindir}/%{name}
+install -Dpm 0755 .cargo-target/release/%{name} %{buildroot}%{_bindir}/%{name}
 install -Dpm 0644 packaging/%{name}.1 %{buildroot}%{_mandir}/man1/%{name}.1
 install -Dpm 0644 packaging/%{name}.desktop %{buildroot}%{_datadir}/applications/%{name}.desktop
 install -Dpm 0644 assets/icons/%{name}.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/%{name}.svg
