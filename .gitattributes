@@ -1,0 +1,5 @@
+# Vendored third-party license texts must stay byte-identical to the
+# upstream official documents. Disable line-ending conversion and
+# normalization so Windows checkouts preserve the exact bytes that the
+# SHA-256 pins in package-windows.ps1 are computed from.
+packaging/windows/licenses/** -text
