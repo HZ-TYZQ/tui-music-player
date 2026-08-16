@@ -15,8 +15,15 @@ use crate::theme::{DEFAULT_THEME, Theme};
 const BASE_LAYOUT_HEIGHT: u16 = 11;
 const MAX_VISUALIZER_HEIGHT: u16 = 5;
 const MIN_VISUALIZER_HEIGHT: u16 = 2;
-const PAUSE_ACTION_ICON: &str = "⏸\u{fe0e} ";
-const PLAY_ACTION_ICON: &str = "▶\u{fe0e} ";
+/// 正在播放时 Space 会暂停。
+const PAUSE_ACTION_ICON: &str = "|| ";
+/// 暂停时 Space 会继续播放。
+const PLAY_ACTION_ICON: &str = ">  ";
+/// 已停止。
+const STOPPED_ICON: &str = "■  ";
+/// 非当前行的指示器占位。四种指示器均为 3 个显示列（所涉字符宽度皆为 1），
+/// 保证标题起始列不随播放状态变化而水平跳动。
+const INACTIVE_ICON: &str = "   ";
 
 pub fn draw(frame: &mut Frame, app: &App) {
     draw_with_theme(frame, app, &DEFAULT_THEME);
@@ -121,7 +128,7 @@ fn draw_library(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         let (icon, icon_style) = if current {
             playback_action_indicator(app.player.state(), theme)
         } else {
-            ("  ", Style::new().fg(theme.primary))
+            (INACTIVE_ICON, Style::new().fg(theme.primary))
         };
         let title_style = Style::new().fg(theme.primary);
         let title_style = if current {
@@ -237,7 +244,7 @@ fn playback_action_indicator(state: PlayState, theme: &Theme) -> (&'static str, 
     match state {
         PlayState::Playing => (PAUSE_ACTION_ICON, Style::new().fg(theme.primary).bold()),
         PlayState::Paused => (PLAY_ACTION_ICON, Style::new().fg(theme.primary).bold()),
-        PlayState::Stopped => ("■ ", Style::new().fg(theme.muted)),
+        PlayState::Stopped => (STOPPED_ICON, Style::new().fg(theme.muted)),
     }
 }
 
@@ -611,16 +618,31 @@ mod tests {
     fn playback_icon_describes_the_space_key_action() {
         assert_eq!(
             playback_action_indicator(PlayState::Playing, &DEFAULT_THEME).0,
-            "⏸\u{fe0e} "
+            PAUSE_ACTION_ICON
         );
         assert_eq!(
             playback_action_indicator(PlayState::Paused, &DEFAULT_THEME).0,
-            "▶\u{fe0e} "
+            PLAY_ACTION_ICON
         );
         assert_eq!(
             playback_action_indicator(PlayState::Stopped, &DEFAULT_THEME).0,
-            "■ "
+            STOPPED_ICON
         );
+    }
+
+    #[test]
+    fn playback_icons_have_fixed_display_width() {
+        // 指示器均为 ASCII/单宽字符，chars().count() 即显示列数。
+        for state in [PlayState::Playing, PlayState::Paused, PlayState::Stopped] {
+            assert_eq!(
+                playback_action_indicator(state, &DEFAULT_THEME)
+                    .0
+                    .chars()
+                    .count(),
+                3
+            );
+        }
+        assert_eq!(INACTIVE_ICON.chars().count(), 3);
     }
 
     #[test]
