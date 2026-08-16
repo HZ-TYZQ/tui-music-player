@@ -2,23 +2,16 @@
 name = "music-player"
 version = "1.0.2"
 edition = "2024"
-description = "A terminal music library player powered by GStreamer"
+description = "A terminal music library player"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/HZ-TYZQ/tui-music-player"
 homepage = "https://github.com/HZ-TYZQ/tui-music-player"
 
-[features]
-# 仅服务迁移期回退；最终删除。
-gstreamer-backend = []
-
 [dependencies]
 clap = { version = "4.6.6", features = ["derive"] }
 crossterm = "0.29.0"
 dirs = "6.0.0"
-gstreamer = "0.25.3"
-gstreamer-pbutils = "0.25.2"
-gstreamer-play = "0.25.0"
 lofty = "0.25.1"
 nucleo = "0.5.0"
 ratatui = "0.30.2"

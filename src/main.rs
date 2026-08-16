@@ -56,7 +56,7 @@ fn run_application() -> Result<(), String> {
         })?
     };
 
-    // GStreamer、播放列表目录及工作线程都在切换终端模式前初始化。
+    // 播放器、播放列表目录及工作线程都在切换终端模式前初始化。
     // 这样启动失败时错误仍是普通、可复制的终端文本。
     let mut app = App::new(library_dir, paths, config, warning, save_config_on_exit)?;
     let mut terminal = setup_terminal().map_err(|error| format!("无法初始化终端: {error}"))?;

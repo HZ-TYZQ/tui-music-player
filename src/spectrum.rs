@@ -1,6 +1,6 @@
 //! CAVA-inspired 频谱处理器（v2）。
 //!
-//! 输入是 GStreamer spectrum 元素的逐帧 dB 幅值（`magnitude`，阈值 clamp 到
+//! 输入是播放后端的逐帧 dB 幅值（`magnitude`，阈值 clamp 到
 //! `SPECTRUM_THRESHOLD_DB`）；输出是每根可视 bar 的 0.0..=1.0 高度。
 //! 管线（全部 linear amplitude 域）：
 //!
@@ -39,7 +39,7 @@ const ATTACK: f32 = 0.6; // 上升：output += ATTACK × (target − output)
 const GRAVITY: f32 = 4.3; // 下落：output = peak × (1 − fall² × GRAVITY)
 const FALL_STEP: f32 = 0.03; // 每帧 fall 增量；峰值约 0.32s 加速落尽
 
-/// 把 GStreamer spectrum 的逐帧 dB 幅值处理成可视 bar 高度。
+/// 把逐帧 dB 幅值处理成可视 bar 高度。
 pub struct SpectrumProcessor {
     /// 每根 bar 的 bin 区间 [lower, upper)，单调递增且互不重叠。
     lower: Vec<usize>,

@@ -1,4 +1,4 @@
-//! GStreamer 播放后端的无声集成测试。
+//! 播放后端的无声集成测试。
 
 use std::fs;
 use std::io::Write;
@@ -140,7 +140,6 @@ fn plays_audio_from_a_unicode_path_with_spaces() {
     player.stop();
 }
 
-#[cfg(not(feature = "gstreamer-backend"))]
 #[test]
 fn play_resets_position_immediately() {
     let temp = tempfile::tempdir().unwrap();
@@ -160,7 +159,6 @@ fn play_resets_position_immediately() {
     );
 }
 
-#[cfg(not(feature = "gstreamer-backend"))]
 #[test]
 fn empty_file_is_rejected_before_playback() {
     let temp = tempfile::tempdir().unwrap();
@@ -172,7 +170,6 @@ fn empty_file_is_rejected_before_playback() {
     assert_eq!(player.state(), PlayState::Stopped);
 }
 
-#[cfg(not(feature = "gstreamer-backend"))]
 #[test]
 fn stale_eos_from_previous_track_is_ignored() {
     let temp = tempfile::tempdir().unwrap();
@@ -193,7 +190,6 @@ fn stale_eos_from_previous_track_is_ignored() {
     assert_eq!(player.state(), PlayState::Playing);
 }
 
-#[cfg(not(feature = "gstreamer-backend"))]
 #[test]
 fn pause_does_not_emit_new_spectrum_progress() {
     let temp = tempfile::tempdir().unwrap();
@@ -229,7 +225,6 @@ fn pause_does_not_emit_new_spectrum_progress() {
     );
 }
 
-#[cfg(not(feature = "gstreamer-backend"))]
 #[test]
 fn stop_does_not_leak_old_spectrum_frames() {
     let temp = tempfile::tempdir().unwrap();
@@ -250,7 +245,6 @@ fn stop_does_not_leak_old_spectrum_frames() {
     );
 }
 
-#[cfg(not(feature = "gstreamer-backend"))]
 #[test]
 fn high_sample_rate_spectrum_reports_source_rate() {
     let temp = tempfile::tempdir().unwrap();
@@ -277,7 +271,6 @@ fn high_sample_rate_spectrum_reports_source_rate() {
     assert_eq!(rate, Some(96_000));
 }
 
-#[cfg(not(feature = "gstreamer-backend"))]
 fn write_test_wav_at_rate(path: &Path, duration_secs: f32, sample_rate: u32) {
     let sample_count = (sample_rate as f32 * duration_secs) as usize;
     let mut samples = Vec::with_capacity(sample_count * 2);

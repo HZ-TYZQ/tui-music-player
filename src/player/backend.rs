@@ -1,4 +1,4 @@
-//! 基于 Rodio 0.22 + 内置 Symphonia 0.5.5 的播放后端。
+//! 基于 Rodio 0.22（内置 Symphonia 0.5.5）的播放后端。
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
