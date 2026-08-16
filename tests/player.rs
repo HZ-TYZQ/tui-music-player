@@ -62,6 +62,38 @@ fn play_pause_seek_volume_mute_and_stop() {
 }
 
 #[test]
+fn natural_end_of_a_long_track_is_not_an_early_eos_error() {
+    let temp = tempfile::tempdir().unwrap();
+    let wav = temp.path().join("long-finish.wav");
+    write_test_wav(&wav, 2.2);
+    let mut player = Player::new_for_tests().unwrap();
+    player.play(&wav).unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(6);
+    let mut ended = None;
+    while Instant::now() < deadline {
+        for event in player.drain_events() {
+            match event {
+                PlayerEvent::EndOfStream => {
+                    ended = Some(true);
+                    break;
+                }
+                PlayerEvent::Error(message) => {
+                    panic!("自然播完不应判成解码错误: {message}");
+                }
+                _ => {}
+            }
+        }
+        if ended.is_some() {
+            break;
+        }
+        sleep(Duration::from_millis(20));
+    }
+    assert_eq!(ended, Some(true), "长于 1s 的短音频应产生正常 EOS");
+    assert_eq!(player.state(), PlayState::Stopped);
+}
+
+#[test]
 fn reports_natural_end_of_stream() {
     let temp = tempfile::tempdir().unwrap();
     let wav = temp.path().join("finish.wav");

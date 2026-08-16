@@ -12,7 +12,6 @@ use lofty::file::FileType;
 use lofty::probe::Probe;
 use rodio::decoder::DecoderBuilder;
 use rodio::mixer::mixer;
-use rodio::source::EmptyCallback;
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Source};
 
 use super::spectrum::{InternalSpectrumEvent, PcmBatch, PcmTap, SpectrumWorker};
@@ -25,7 +24,12 @@ const HEADLESS_CHANNELS: u16 = 2;
 const HEADLESS_SAMPLE_RATE: u32 = 44_100;
 
 enum InternalEvent {
-    SourceEnded { generation: u64 },
+    SourceEnded {
+        generation: u64,
+        /// 解码 Source 自己耗尽时的已播位置。不能在事件到达后再读
+        /// `Player::position()`：队列此时已切到后续静音源，`get_pos()` 常为 0。
+        position: Duration,
+    },
     DeviceError(String),
 }
 
@@ -206,11 +210,13 @@ impl Player {
             Arc::clone(&self.pcm_slot),
             Arc::clone(&self.spectrum_live),
         );
-        self.backend.append(tap);
-        let ended_tx = self.event_tx.clone();
-        self.backend.append(EmptyCallback::new(Box::new(move || {
-            let _ = ended_tx.send(InternalEvent::SourceEnded { generation });
-        })));
+        self.backend.append(EndSignal {
+            inner: tap,
+            generation,
+            events: self.event_tx.clone(),
+            samples: 0,
+            signaled: false,
+        });
 
         self.apply_volume();
         self.backend.play();
@@ -319,11 +325,14 @@ impl Player {
         let mut drained = Vec::new();
         while let Ok(event) = self.events.try_recv() {
             match event {
-                InternalEvent::SourceEnded { generation } => {
+                InternalEvent::SourceEnded {
+                    generation,
+                    position,
+                } => {
                     if generation != current {
                         continue;
                     }
-                    let kind = classify_source_end(self.position(), self.current_duration);
+                    let kind = classify_source_end(position, self.current_duration);
                     self.mark_stopped();
                     drained.push(match kind {
                         SourceEndKind::EndOfStream => PlayerEvent::EndOfStream,
@@ -410,6 +419,88 @@ impl Drop for Player {
 enum SourceEndKind {
     EndOfStream,
     Error,
+}
+
+/// 解码 Source 耗尽时发出结束事件，并带上按采样计数的播放位置。
+struct EndSignal<S> {
+    inner: S,
+    generation: u64,
+    events: Sender<InternalEvent>,
+    samples: u64,
+    signaled: bool,
+}
+
+impl<S: Source<Item = f32>> EndSignal<S> {
+    fn elapsed(&self) -> Duration {
+        let channels = u64::from(self.inner.channels().get());
+        let rate = u64::from(self.inner.sample_rate().get());
+        if channels == 0 || rate == 0 {
+            return Duration::ZERO;
+        }
+        let frames = self.samples / channels;
+        Duration::from_nanos(frames.saturating_mul(1_000_000_000) / rate)
+    }
+}
+
+impl<S: Source<Item = f32>> Iterator for EndSignal<S> {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.inner.next() {
+            Some(sample) => {
+                self.samples += 1;
+                Some(sample)
+            }
+            None => {
+                if !self.signaled {
+                    self.signaled = true;
+                    let _ = self.events.send(InternalEvent::SourceEnded {
+                        generation: self.generation,
+                        position: self.elapsed(),
+                    });
+                }
+                None
+            }
+        }
+    }
+}
+
+impl<S: Source<Item = f32>> Source for EndSignal<S> {
+    fn current_span_len(&self) -> Option<usize> {
+        self.inner.current_span_len()
+    }
+
+    fn channels(&self) -> rodio::ChannelCount {
+        self.inner.channels()
+    }
+
+    fn sample_rate(&self) -> rodio::SampleRate {
+        self.inner.sample_rate()
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        self.inner.total_duration()
+    }
+
+    fn try_seek(&mut self, pos: Duration) -> Result<(), rodio::source::SeekError> {
+        self.inner.try_seek(pos)?;
+        let channels = u64::from(self.inner.channels().get());
+        let rate = u64::from(self.inner.sample_rate().get());
+        self.samples = duration_to_samples(pos, channels, rate);
+        Ok(())
+    }
+}
+
+fn duration_to_samples(position: Duration, channels: u64, rate: u64) -> u64 {
+    if channels == 0 || rate == 0 {
+        return 0;
+    }
+    position
+        .as_nanos()
+        .saturating_mul(rate as u128)
+        .saturating_mul(channels as u128)
+        .checked_div(1_000_000_000)
+        .unwrap_or(0) as u64
 }
 
 fn classify_source_end(position: Duration, duration: Option<Duration>) -> SourceEndKind {
