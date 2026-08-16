@@ -4,9 +4,24 @@
 
 ## [Unreleased]
 
+### 播放与音乐库
+
+- 播放后端改为 Rodio 0.22（内置 Symphonia 0.5.5）+ CPAL，不再使用 GStreamer
+- 媒体信息与时长改为 Lofty 0.25.1 读取；SQLite 缓存 schema 不变
+- 频谱改为非阻塞 PCM tap + rustfft，不再依赖 GStreamer `spectrum`
+- 支持 MP3、FLAC、WAV、OGG/OGA Vorbis、M4A/AAC、AAC ADTS、AIFF
+- Opus 暂缓支持；APE、WMA 从支持列表移除，播放时明确拒绝
+
 ### 构建与发行
 
+- Linux CI / RPM 构建依赖改为 ALSA 与 SQLite，不再安装 GStreamer
+- Windows 发行包不再附带 GStreamer runtime，也不再设置 GST 环境变量
 - CI 与 Release 改为从官方 GitHub release（jrsoftware/issrc is-6_7_1）下载 Inno Setup 6.7.1 并校验 SHA-256，替换 chocolatey 安装，消除 runner 预装版本漂移
+
+### 依赖
+
+- 新增 `rodio` 0.22.2（`symphonia-aiff`）、`lofty` 0.25.1、`rustfft` 6.4
+- 移除 `gstreamer`、`gstreamer-play`、`gstreamer-pbutils`
 
 ## [1.0.2] - 2026-08-15
 
