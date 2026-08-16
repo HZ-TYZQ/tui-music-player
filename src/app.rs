@@ -62,7 +62,42 @@ impl App {
         initial_warning: Option<String>,
         save_config_on_exit: bool,
     ) -> Result<Self, String> {
-        let player = Player::new()?;
+        Self::with_player(
+            Player::new()?,
+            library_dir,
+            paths,
+            config,
+            initial_warning,
+            save_config_on_exit,
+        )
+    }
+
+    #[cfg(test)]
+    fn new_for_tests(
+        library_dir: PathBuf,
+        paths: AppPaths,
+        config: AppConfig,
+        initial_warning: Option<String>,
+        save_config_on_exit: bool,
+    ) -> Result<Self, String> {
+        Self::with_player(
+            Player::new_for_tests()?,
+            library_dir,
+            paths,
+            config,
+            initial_warning,
+            save_config_on_exit,
+        )
+    }
+
+    fn with_player(
+        player: Player,
+        library_dir: PathBuf,
+        paths: AppPaths,
+        config: AppConfig,
+        initial_warning: Option<String>,
+        save_config_on_exit: bool,
+    ) -> Result<Self, String> {
         player.set_volume(config.volume);
         player.set_muted(config.muted);
         player.set_spectrum_enabled(config.visualizer_enabled);
@@ -686,7 +721,7 @@ mod tests {
             temp.path().join("cache"),
             Some(music.clone()),
         );
-        let app = App::new(music, paths, config, None, false).unwrap();
+        let app = App::new_for_tests(music, paths, config, None, false).unwrap();
         (temp, app)
     }
 
