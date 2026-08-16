@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use ratatui::prelude::*;
 use ratatui::widgets::{
-    Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap,
+    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
 };
 
 use crate::app::{App, Overlay};
@@ -226,16 +226,18 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         .map(|duration| position.as_secs_f64() / duration.as_secs_f64())
         .unwrap_or_default()
         .clamp(0.0, 1.0);
-    let label = format!(
-        "{} / {}",
-        fmt_duration(position),
-        duration.map(fmt_duration).unwrap_or_else(|| "--:--".into())
-    );
+    let position_label = fmt_duration(position);
+    let duration_label = duration.map(fmt_duration).unwrap_or_else(|| "--:--".into());
+    // 布局：' ' pos ' ' bar ' ' dur，bar 填满剩余宽度。
+    let bar_width =
+        (rows[1].width as usize).saturating_sub(position_label.len() + duration_label.len() + 3);
+    let bar = ascii_progress_bar(ratio, bar_width);
     frame.render_widget(
-        Gauge::default()
-            .gauge_style(Style::new().fg(theme.primary))
-            .ratio(ratio)
-            .label(label),
+        Paragraph::new(Line::from(vec![
+            Span::styled(format!(" {position_label} "), Style::new().fg(theme.muted)),
+            Span::styled(bar, Style::new().fg(theme.primary)),
+            Span::styled(format!(" {duration_label}"), Style::new().fg(theme.muted)),
+        ])),
         rows[1],
     );
 }
@@ -566,6 +568,24 @@ pub fn fmt_duration(duration: Duration) -> String {
     }
 }
 
+/// 生成 width 列的 ASCII 进度条：'=' 已播放、'>' 播放头、'-' 未播放。
+/// filled 用 floor 保证比例未满时不虚报；ratio >= 1.0 时全部填满为 '='，
+/// 末尾不再保留播放头。
+fn ascii_progress_bar(ratio: f64, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let ratio = ratio.clamp(0.0, 1.0);
+    if ratio >= 1.0 {
+        return "=".repeat(width);
+    }
+    let filled = (ratio * width as f64).floor() as usize;
+    let mut bar = "=".repeat(filled);
+    bar.push('>');
+    bar.push_str(&"-".repeat(width - filled - 1));
+    bar
+}
+
 #[allow(dead_code)]
 fn _path_reference(path: &Path) -> &Path {
     path
@@ -639,6 +659,30 @@ mod tests {
             );
         }
         assert_eq!(INACTIVE_ICON.chars().count(), 3);
+    }
+
+    #[test]
+    fn ascii_progress_bar_has_fixed_width_and_expected_charset() {
+        for width in 0..=40 {
+            for ratio in [0.0, 0.25, 0.5, 0.99, 1.0] {
+                let bar = ascii_progress_bar(ratio, width);
+                assert_eq!(bar.chars().count(), width);
+                assert!(bar.chars().all(|cell| matches!(cell, '=' | '>' | '-')));
+            }
+        }
+    }
+
+    #[test]
+    fn ascii_progress_bar_renders_head_and_completion() {
+        assert_eq!(ascii_progress_bar(0.0, 10), ">---------");
+        assert_eq!(ascii_progress_bar(0.5, 10), "=====>----");
+        // floor 不虚报：99.9% 仍未走完，播放头保留在最右列。
+        assert_eq!(ascii_progress_bar(0.999, 10), "=========>");
+        // 100% 全部填满，末尾不留 '>'。
+        assert_eq!(ascii_progress_bar(1.0, 10), "==========");
+        assert_eq!(ascii_progress_bar(0.5, 1), ">");
+        assert_eq!(ascii_progress_bar(1.0, 1), "=");
+        assert_eq!(ascii_progress_bar(0.5, 0), "");
     }
 
     #[test]
