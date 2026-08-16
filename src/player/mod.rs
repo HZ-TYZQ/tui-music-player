@@ -27,6 +27,8 @@ pub enum PlayerEvent {
 mod gstreamer;
 #[cfg(feature = "rodio-backend")]
 mod rodio;
+#[cfg(feature = "rodio-backend")]
+mod spectrum;
 
 #[cfg(not(feature = "rodio-backend"))]
 pub use self::gstreamer::Player;
