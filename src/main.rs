@@ -74,7 +74,14 @@ fn run_application() -> Result<(), String> {
 fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> io::Result<()> {
     while !app.should_quit {
         terminal.draw(|frame| ui::draw(frame, app))?;
-        if event::poll(Duration::from_millis(50))?
+        // 频谱开启时把主循环提到约 50Hz，与 spectrum 源 20ms interval 对齐；
+        // 关闭时回到 50ms 降低空闲唤醒。
+        let poll_ms = if app.config.visualizer_enabled {
+            20
+        } else {
+            50
+        };
+        if event::poll(Duration::from_millis(poll_ms))?
             && let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
         {

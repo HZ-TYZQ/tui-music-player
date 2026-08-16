@@ -266,8 +266,9 @@ fn draw_visualizer(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         return;
     }
 
-    let bar_count = app.spectrum.len().min(usize::from(inner.width).div_ceil(2));
-    let bars = resample_spectrum(&app.spectrum, bar_count);
+    let spectrum = app.spectrum_bars();
+    let bar_count = spectrum.len().min(usize::from(inner.width).div_ceil(2));
+    let bars = resample_spectrum(spectrum, bar_count);
     let plot_width = bars.len().saturating_mul(2).saturating_sub(1);
     let left_padding = (usize::from(inner.width).saturating_sub(plot_width)) / 2;
     let right_padding = usize::from(inner.width)

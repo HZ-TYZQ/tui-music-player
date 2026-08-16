@@ -5,6 +5,7 @@ pub mod library;
 pub mod player;
 pub mod playlist;
 pub mod search;
+pub mod spectrum;
 pub(crate) mod theme;
 pub mod track;
 pub mod ui;

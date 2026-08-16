@@ -12,7 +12,7 @@ use gstreamer::prelude::*;
 use gstreamer_play as gst_play;
 
 pub const SPECTRUM_BANDS: usize = 512;
-const SPECTRUM_INTERVAL_NS: u64 = 50_000_000;
+const SPECTRUM_INTERVAL_NS: u64 = 20_000_000;
 pub const SPECTRUM_THRESHOLD_DB: f32 = -72.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

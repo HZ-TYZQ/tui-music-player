@@ -8,9 +8,10 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::config::{AppConfig, AppPaths};
 use crate::library::{LibraryEvent, LibraryWorker};
-use crate::player::{PlayState, Player, PlayerEvent, SPECTRUM_THRESHOLD_DB};
+use crate::player::{PlayState, Player, PlayerEvent};
 use crate::playlist::PlaylistStore;
 use crate::search::SearchIndex;
+use crate::spectrum::SpectrumProcessor;
 use crate::track::{PlayMode, Track};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,18 +23,6 @@ pub enum Overlay {
     NameInput,
     DeleteConfirm,
 }
-
-// 频谱观感调参区（详见 plan/v1.0.3-plan.md 改动二）。
-const SPECTRUM_ATTACK: f32 = 0.85; // 上升沿响应，越大越跟手
-const SPECTRUM_DECAY: f32 = 0.28; // 下落沿衰减，越大落得越快
-const SPECTRUM_EPSILON: f32 = 0.001;
-const VISUALIZER_BARS: usize = 32;
-const VISUALIZER_MIN_HZ: f32 = 50.0;
-const VISUALIZER_MAX_HZ: f32 = 8_000.0;
-const VISUALIZER_LOW_FREQUENCY_GAIN: f32 = 1.0; // 中性基准；低频过强可调至 0.85~0.9
-const VISUALIZER_RESPONSE_GAMMA: f32 = 0.75; // < 1.0 提亮中低幅值
-/// dB 归一化上限；下限复用 player::SPECTRUM_THRESHOLD_DB（-72 dB）。
-const SPECTRUM_CEIL_DB: f32 = -12.0;
 
 pub struct App {
     pub library_dir: PathBuf,
@@ -57,8 +46,7 @@ pub struct App {
     pub name_input: String,
     pub playlists: PlaylistStore,
     pub config: AppConfig,
-    pub spectrum: Vec<f32>,
-    spectrum_target: Vec<f32>,
+    spectrum: SpectrumProcessor,
     paths: AppPaths,
     library: LibraryWorker,
     rng_state: u64,
@@ -103,8 +91,7 @@ impl App {
             name_input: String::new(),
             playlists,
             config,
-            spectrum: vec![0.0; VISUALIZER_BARS],
-            spectrum_target: vec![0.0; VISUALIZER_BARS],
+            spectrum: SpectrumProcessor::new(),
             paths,
             library,
             rng_state: SystemTime::now()
@@ -212,19 +199,23 @@ impl App {
                     magnitudes,
                     sample_rate,
                 } => {
+                    // 逐帧处理：一次 drain 中的多帧都经过完整管线，
+                    // 避免 last-wins 丢失瞬态峰值。
                     if self.config.visualizer_enabled {
-                        self.spectrum_target = map_spectrum_frame(&magnitudes, sample_rate);
+                        self.spectrum.process_frame(&magnitudes, sample_rate);
                     }
                 }
             }
         }
 
-        if self.player.state() != PlayState::Playing {
-            self.spectrum_target.fill(0.0);
+        if self.config.visualizer_enabled && self.player.state() != PlayState::Playing {
+            self.spectrum.fade_step();
         }
-        if self.config.visualizer_enabled {
-            animate_spectrum(&mut self.spectrum, &self.spectrum_target);
-        }
+    }
+
+    /// 当前可视 bar 高度（0.0..=1.0），供 UI 绘制。
+    pub fn spectrum_bars(&self) -> &[f32] {
+        self.spectrum.bars()
     }
 
     /// 应用一次完整扫描结果，并按路径尽量保留正在播放与选中的歌曲位置。
@@ -281,7 +272,8 @@ impl App {
             return false;
         };
         let path = track.path.clone();
-        self.clear_spectrum();
+        // 切歌：保留已收敛的 sensitivity，重新进入 fast-adapt（见 spectrum.rs）。
+        self.spectrum.on_track_change();
         if remember_current
             && let Some(current) = self.current_track()
             && current.path != path
@@ -436,8 +428,7 @@ impl App {
     }
 
     fn clear_spectrum(&mut self) {
-        self.spectrum.fill(0.0);
-        self.spectrum_target.fill(0.0);
+        self.spectrum.reset_output();
     }
 
     fn handle_search_key(&mut self, code: KeyCode) {
@@ -678,83 +669,6 @@ impl App {
     }
 }
 
-fn map_spectrum_frame(frame: &[f32], sample_rate: u32) -> Vec<f32> {
-    let nyquist = sample_rate as f32 / 2.0;
-    let upper_hz = VISUALIZER_MAX_HZ.min(nyquist);
-    if frame.is_empty() || upper_hz <= VISUALIZER_MIN_HZ {
-        return vec![0.0; VISUALIZER_BARS];
-    }
-
-    let bin_width = nyquist / frame.len() as f32;
-    let frequency_ratio = upper_hz / VISUALIZER_MIN_HZ;
-    (0..VISUALIZER_BARS)
-        .map(|bar| {
-            let lower_hz =
-                VISUALIZER_MIN_HZ * frequency_ratio.powf(bar as f32 / VISUALIZER_BARS as f32);
-            let upper_hz =
-                VISUALIZER_MIN_HZ * frequency_ratio.powf((bar + 1) as f32 / VISUALIZER_BARS as f32);
-            let magnitude = band_max_magnitude(frame, bin_width, lower_hz, upper_hz);
-            let frequency_position = (bar as f32 + 0.5) / VISUALIZER_BARS as f32;
-            let frequency_gain = VISUALIZER_LOW_FREQUENCY_GAIN
-                + (1.0 - VISUALIZER_LOW_FREQUENCY_GAIN) * frequency_position;
-            normalize_magnitude(magnitude).powf(VISUALIZER_RESPONSE_GAMMA) * frequency_gain
-        })
-        .collect()
-}
-
-/// 取频段内 FFT bin 的最大 dB 幅值。bin 区间为半开区间 [start, end)，end 为
-/// exclusive 并 clamp 到 frame.len()，避免多吃右侧相邻频段的一个 bin。
-/// 区间为空或没有有限值时，退化到带中心频率最近的单个 bin；仍非有限则返回
-/// SPECTRUM_THRESHOLD_DB。
-fn band_max_magnitude(frame: &[f32], bin_width: f32, lower_hz: f32, upper_hz: f32) -> f32 {
-    if frame.is_empty() || !bin_width.is_finite() || bin_width <= 0.0 {
-        return SPECTRUM_THRESHOLD_DB;
-    }
-    let start = ((lower_hz / bin_width).floor().max(0.0) as usize).min(frame.len() - 1);
-    let end = ((upper_hz / bin_width).ceil().max(0.0) as usize).min(frame.len());
-    let best = frame[start..end]
-        .iter()
-        .copied()
-        .filter(|magnitude| magnitude.is_finite())
-        .fold(f32::NEG_INFINITY, f32::max);
-    if best.is_finite() {
-        return best;
-    }
-    let center_bin = ((lower_hz * upper_hz).sqrt() / bin_width).round() as usize;
-    let fallback = frame[center_bin.min(frame.len() - 1)];
-    if fallback.is_finite() {
-        fallback
-    } else {
-        SPECTRUM_THRESHOLD_DB
-    }
-}
-
-fn normalize_magnitude(magnitude: f32) -> f32 {
-    if magnitude.is_finite() {
-        ((magnitude.clamp(SPECTRUM_THRESHOLD_DB, SPECTRUM_CEIL_DB) - SPECTRUM_THRESHOLD_DB)
-            / (SPECTRUM_CEIL_DB - SPECTRUM_THRESHOLD_DB))
-            .clamp(0.0, 1.0)
-    } else {
-        0.0
-    }
-}
-
-fn animate_spectrum(current: &mut Vec<f32>, target: &[f32]) {
-    current.resize(target.len(), 0.0);
-    for (current, target) in current.iter_mut().zip(target) {
-        let factor = if *target > *current {
-            SPECTRUM_ATTACK
-        } else {
-            SPECTRUM_DECAY
-        };
-        *current += (*target - *current) * factor;
-        if current.abs() < SPECTRUM_EPSILON {
-            *current = 0.0;
-        }
-        *current = current.clamp(0.0, 1.0);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};
@@ -990,7 +904,7 @@ mod tests {
 
         app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
         assert!(!app.config.visualizer_enabled);
-        assert!(app.spectrum.iter().all(|value| *value == 0.0));
+        assert!(app.spectrum_bars().iter().all(|value| *value == 0.0));
 
         app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
         assert!(app.config.visualizer_enabled);
@@ -1009,98 +923,6 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
         assert!(app.config.visualizer_enabled);
         assert_eq!(app.overlay, Overlay::Help);
-    }
-
-    #[test]
-    fn spectrum_normalization_clamps_invalid_and_out_of_range_values() {
-        let normalized = [
-            -90.0,
-            SPECTRUM_THRESHOLD_DB,
-            -42.0,
-            SPECTRUM_CEIL_DB,
-            0.0,
-            f32::NAN,
-        ]
-        .map(normalize_magnitude);
-        assert_eq!(normalized, [0.0, 0.0, 0.5, 1.0, 1.0, 0.0]);
-    }
-
-    #[test]
-    fn spectrum_mapping_uses_logarithmic_50_to_8000_hz_bars() {
-        let sample_rate = 48_000;
-        let bin_width = sample_rate as f32 / 2.0 / 512.0;
-        let mapped_peak = |frequency: f32| {
-            let mut frame = vec![SPECTRUM_THRESHOLD_DB; 512];
-            frame[(frequency / bin_width).floor() as usize] = 0.0;
-            let mapped = map_spectrum_frame(&frame, sample_rate);
-            let strongest_bar = mapped
-                .iter()
-                .enumerate()
-                .max_by(|(_, left), (_, right)| left.total_cmp(right))
-                .map(|(index, _)| index)
-                .unwrap();
-            (strongest_bar, mapped)
-        };
-
-        let (bass_bar, bass) = mapped_peak(100.0);
-        let (treble_bar, _) = mapped_peak(4_000.0);
-        assert!(bass_bar < 8);
-        assert!(treble_bar > 24);
-        assert!(bass_bar < treble_bar);
-        // 峰值 bin 所在带取到 0 dB，归一化后为满幅。
-        assert!(bass[bass_bar] > 0.99);
-        // 低频段带窄于 bin 宽度，峰可能与两侧相邻带共享同一个 bin；非零带必须是
-        // 包含峰值带的连续小区间，其余带必须为 0。
-        let nonzero: Vec<usize> = bass
-            .iter()
-            .enumerate()
-            .filter(|(_, magnitude)| **magnitude > 0.0)
-            .map(|(index, _)| index)
-            .collect();
-        assert!(nonzero.contains(&bass_bar));
-        assert!(nonzero.len() <= 5);
-        assert!(nonzero.windows(2).all(|pair| pair[1] == pair[0] + 1));
-        assert_eq!(map_spectrum_frame(&[], sample_rate), vec![0.0; 32]);
-    }
-
-    #[test]
-    fn band_max_magnitude_uses_half_open_bin_range() {
-        let bin_width = 10.0;
-        let frame = [-70.0, -30.0, -50.0, -20.0, -60.0];
-        // [10, 30) 映射到 bin 1..3：取 bin 1、2 的最大值，不含 bin 3 的 -20.0。
-        assert_eq!(band_max_magnitude(&frame, bin_width, 10.0, 30.0), -30.0);
-        // 单 bin 频段。
-        assert_eq!(band_max_magnitude(&frame, bin_width, 40.0, 45.0), -60.0);
-    }
-
-    #[test]
-    fn band_max_magnitude_ignores_non_finite_bins() {
-        let bin_width = 10.0;
-        let frame = [f32::NAN, -30.0, f32::NAN];
-        assert_eq!(band_max_magnitude(&frame, bin_width, 10.0, 30.0), -30.0);
-        // 区间内全 NaN 且带中心 bin 也非有限时，退化到 threshold 底。
-        let frame = [f32::NAN; 3];
-        assert_eq!(
-            band_max_magnitude(&frame, bin_width, 10.0, 30.0),
-            SPECTRUM_THRESHOLD_DB
-        );
-        assert_eq!(
-            band_max_magnitude(&[], bin_width, 10.0, 30.0),
-            SPECTRUM_THRESHOLD_DB
-        );
-    }
-
-    #[test]
-    fn spectrum_animation_attacks_quickly_and_decays_without_leaving_bounds() {
-        let mut current = vec![0.0, 1.0];
-        animate_spectrum(&mut current, &[1.0, 0.0]);
-        assert_eq!(current, vec![SPECTRUM_ATTACK, 1.0 - SPECTRUM_DECAY]);
-        assert!(current.iter().all(|value| (0.0..=1.0).contains(value)));
-
-        for _ in 0..100 {
-            animate_spectrum(&mut current, &[0.0, 0.0]);
-        }
-        assert_eq!(current, vec![0.0, 0.0]);
     }
 
     #[test]
