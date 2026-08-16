@@ -1,32 +1,42 @@
 Third-party notices
 ===================
 
-This package includes an unmodified private runtime distribution of
-GStreamer 1.28.6 (the official MSVC x86_64 build produced by the
-GStreamer Cerbero build system). GStreamer is an LGPL-licensed
-multimedia framework and its binary distribution contains components
-under additional compatible licenses.
+This package is a statically linked Rust binary. It does not ship a
+separate multimedia runtime. The following third-party crates are
+compiled into music-player.exe and are the licenses that apply to
+this distribution.
 
-License texts included in this package:
+Playback and decoding
+---------------------
 
-- The official GStreamer 1.28.6 license text published with the
-  runtime installer:
-  third-party-licenses\gstreamer-1.28.6-license.txt
-- The full text of the GNU Lesser General Public License version 2.1:
-  third-party-licenses\LGPL-2.1.txt
+- rodio 0.22.2 — MIT OR Apache-2.0
+  https://github.com/RustAudio/rodio
+- cpal 0.17.x (via rodio) — Apache-2.0
+  https://github.com/RustAudio/cpal
+- symphonia 0.5.5 (via rodio, including format/codec crates) — MPL-2.0
+  https://github.com/pdeljanov/Symphonia
+  License text: third-party-licenses\MPL-2.0.txt
+  Corresponding source: the Symphonia 0.5.5 crate and repository above.
 
-Because the GStreamer runtime is redistributed unmodified, the
-corresponding source code is the source of the official 1.28.6
-release. See SOURCE-CODE-OFFER.txt for the precise 1.28.6 source
-references and the written commitment of HZ-TYZQ to provide the
-corresponding source code for at least three years.
+Metadata
+--------
+
+- lofty 0.25.1 — MIT OR Apache-2.0
+  https://github.com/Serial-ATA/lofty-rs
+
+Spectrum analysis
+-----------------
+
+- rustfft 6.4 — MIT OR Apache-2.0
+  https://github.com/ejmahler/RustFFT
+
+Other Rust crates used by this application (UI, CLI, config, SQLite,
+search) are MIT and/or Apache-2.0. Their license texts are available
+from the corresponding crates.io / GitHub sources listed in Cargo.lock.
 
 The installer's Chinese Simplified interface language is provided by
 the user-contributed Inno Setup translation maintained by Zhenghan
 Yang (attribution and source are preserved inside the file), vendored
 at build time from the Inno Setup source repository.
-
-GStreamer project: https://gstreamer.freedesktop.org/
-GStreamer source:  https://gitlab.freedesktop.org/gstreamer/
 
 Music Player itself is licensed under the MIT License; see LICENSE.

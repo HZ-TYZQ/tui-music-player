@@ -1,7 +1,7 @@
 Name:           music-player
 Version:        1.0.2
 Release:        1%{?dist}
-Summary:        Terminal music library player powered by GStreamer
+Summary:        Terminal music library player
 
 License:        MIT
 URL:            https://github.com/HZ-TYZQ/tui-music-player
@@ -11,24 +11,16 @@ Source1:        %{name}-%{version}-vendor.tar.gz
 BuildRequires:  cargo
 BuildRequires:  rust
 BuildRequires:  desktop-file-utils
-BuildRequires:  pkgconfig(gstreamer-1.0)
-BuildRequires:  pkgconfig(gstreamer-audio-1.0)
-BuildRequires:  pkgconfig(gstreamer-play-1.0)
-BuildRequires:  pkgconfig(gstreamer-pbutils-1.0)
+BuildRequires:  pkgconfig(alsa)
 BuildRequires:  pkgconfig(sqlite3)
-Requires:       gstreamer1
-Requires:       gstreamer1-plugins-base
-Requires:       gstreamer1-plugins-good
-Requires:       gstreamer1-plugins-bad-free
-Requires:       gstreamer1-plugins-ugly-free
-Requires:       gstreamer1-plugin-libav
 
 ExclusiveArch:  x86_64
 
 %description
 Music Player provides a responsive terminal interface for a local music
-library. It uses GStreamer for metadata and playback, SQLite for an incremental
-index that can be rebuilt, and XDG directories for settings and playlists.
+library. It uses Rodio for playback, Lofty for metadata, SQLite for an
+incremental index that can be rebuilt, and XDG directories for settings
+and playlists.
 
 %prep
 %autosetup -n %{name}-%{version}
@@ -64,6 +56,10 @@ install -Dpm 0644 assets/icons/%{name}-48.png %{buildroot}%{_datadir}/icons/hico
 %{_datadir}/icons/hicolor/48x48/apps/%{name}.png
 
 %changelog
+* Sun Aug 16 2026 HZ-TYZQ - 1.0.2-1
+- Replace GStreamer playback and Discoverer with Rodio and Lofty
+- Build against ALSA; let rpmbuild generate runtime ELF dependencies
+
 * Sat Aug 15 2026 HZ-TYZQ - 1.0.2-1
 - Add Windows 11 x86_64 MSVC builds, tests, and release packaging
 - Bundle a private GStreamer runtime and SQLite in Windows packages
