@@ -9,8 +9,8 @@ repository = "https://github.com/HZ-TYZQ/tui-music-player"
 homepage = "https://github.com/HZ-TYZQ/tui-music-player"
 
 [features]
-# 仅服务 GStreamer → Rodio 迁移期；最终删除。
-rodio-backend = ["dep:rustfft"]
+# 仅服务迁移期回退；最终删除。
+gstreamer-backend = []
 
 [dependencies]
 clap = { version = "4.6.6", features = ["derive"] }
@@ -24,7 +24,7 @@ nucleo = "0.5.0"
 ratatui = "0.30.2"
 rodio = { version = "0.22.2", features = ["symphonia-aiff"] }
 rusqlite = { version = "0.40.2", features = ["bundled-windows"] }
-rustfft = { version = "6.4", optional = true }
+rustfft = "6.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "1.1.4"
