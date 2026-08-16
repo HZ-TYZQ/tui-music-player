@@ -38,6 +38,8 @@ const SPECTRUM_CEIL_DB: f32 = -12.0;
 pub struct App {
     pub library_dir: PathBuf,
     pub tracks: Vec<Track>,
+    /// 时长列显示宽度缓存：仅在新与 apply_scan_finished 时重算，绘制路径零扫描。
+    pub duration_column_width: u16,
     pub selected: usize,
     pub playing_index: Option<usize>,
     pub queue: VecDeque<PathBuf>,
@@ -83,6 +85,7 @@ impl App {
         Ok(Self {
             library_dir,
             tracks: Vec::new(),
+            duration_column_width: 5,
             selected: 0,
             playing_index: None,
             queue: VecDeque::new(),
@@ -229,6 +232,14 @@ impl App {
         let current_path = self.player.current_path().map(Path::to_path_buf);
         let selected_path = self.selected_track().map(|track| track.path.clone());
         self.tracks = tracks;
+        self.duration_column_width = self
+            .tracks
+            .iter()
+            .filter_map(|track| track.duration)
+            .map(|duration| crate::ui::fmt_duration(duration).len() as u16)
+            .max()
+            .unwrap_or(5)
+            .max(5);
         self.search.replace_tracks(&self.tracks);
         self.playing_index = current_path
             .as_ref()
@@ -1090,5 +1101,22 @@ mod tests {
             animate_spectrum(&mut current, &[0.0, 0.0]);
         }
         assert_eq!(current, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn duration_column_width_follows_the_longest_track_duration() {
+        let (_temp, mut app) = test_app(AppConfig::default());
+        assert_eq!(app.duration_column_width, 5);
+
+        app.apply_scan_finished(vec![track(PathBuf::from("/music/a.wav"))], Vec::new());
+        assert_eq!(app.duration_column_width, 5);
+
+        let mut long = track(PathBuf::from("/music/long.wav"));
+        long.duration = Some(Duration::from_secs(3_661)); // "1:01:01" 宽 7
+        app.apply_scan_finished(vec![long], Vec::new());
+        assert_eq!(app.duration_column_width, 7);
+
+        app.apply_scan_finished(Vec::new(), Vec::new());
+        assert_eq!(app.duration_column_width, 5);
     }
 }
