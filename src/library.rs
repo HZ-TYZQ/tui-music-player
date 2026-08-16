@@ -10,16 +10,14 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use gst_pbutils::prelude::*;
-use gstreamer as gst;
-use gstreamer_pbutils as gst_pbutils;
+use lofty::file::{AudioFile, FileType, TaggedFileExt};
+use lofty::probe::Probe;
+use lofty::tag::Accessor;
 use rusqlite::{Connection, ErrorCode, params};
 
 use crate::track::Track;
 
-pub const AUDIO_EXTENSIONS: &[&str] = &[
-    "mp3", "flac", "wav", "ogg", "oga", "opus", "m4a", "aac", "wma", "aiff", "ape",
-];
+pub const AUDIO_EXTENSIONS: &[&str] = &["mp3", "flac", "wav", "ogg", "oga", "m4a", "aac", "aiff"];
 
 #[derive(Debug)]
 pub enum LibraryEvent {
@@ -227,8 +225,6 @@ fn scan_library(
 ) -> Result<(Vec<Track>, Vec<String>), String> {
     let root_text = root.to_string_lossy().into_owned();
     let cached = load_cached(connection, &root_text)?;
-    let discoverer = gst_pbutils::Discoverer::new(gst::ClockTime::from_seconds(3))
-        .map_err(|error| format!("无法启动媒体信息读取器: {error}"))?;
     let scan_id = unix_nanos();
     let mut warnings = Vec::new();
     let files = collect_audio_files(root, &mut warnings);
@@ -260,7 +256,7 @@ fn scan_library(
         {
             cached.clone()
         } else {
-            match discover_track(&discoverer, path.clone(), relative, size, modified_ns) {
+            match discover_track(path.clone(), relative, size, modified_ns) {
                 Ok(track) => track,
                 Err(error) => {
                     warnings.push(error);
@@ -380,47 +376,34 @@ fn upsert_track(
 }
 
 fn discover_track(
-    discoverer: &gst_pbutils::Discoverer,
     path: PathBuf,
     relative_path: PathBuf,
     file_size: u64,
     modified_ns: i64,
 ) -> Result<Track, String> {
-    let uri = gst::glib::filename_to_uri(&path, None)
-        .map_err(|error| format!("无法解析 {}: {error}", path.display()))?;
-    let info = discoverer
-        .discover_uri(uri.as_str())
-        .map_err(|error| format!("无法读取 {} 的媒体信息: {error}", path.display()))?;
-    if info.audio_streams().is_empty() {
-        return Err(format!("跳过没有音频流的文件: {}", path.display()));
+    let probe = Probe::open(&path)
+        .map_err(|error| format!("无法打开 {}: {error}", path.display()))?
+        .guess_file_type()
+        .map_err(|error| format!("无法识别 {}: {error}", path.display()))?;
+    if let Some(file_type) = probe.file_type() {
+        reject_library_file_type(file_type, &path)?;
     }
 
-    #[allow(deprecated)]
-    let global_tags = info.tags();
-    let stream_tags = info
-        .audio_streams()
-        .first()
-        .and_then(|stream| stream.tags());
-    let title = global_tags
-        .as_ref()
-        .and_then(tag_title)
-        .or_else(|| stream_tags.as_ref().and_then(tag_title))
-        .filter(|title| !title.trim().is_empty())
-        .unwrap_or_else(|| {
-            relative_path
-                .file_stem()
-                .and_then(|name| name.to_str())
-                .unwrap_or("未知曲目")
-                .to_owned()
-        });
-    let artist = global_tags
-        .as_ref()
-        .and_then(tag_artist)
-        .or_else(|| stream_tags.as_ref().and_then(tag_artist));
-    let album = global_tags
-        .as_ref()
-        .and_then(tag_album)
-        .or_else(|| stream_tags.as_ref().and_then(tag_album));
+    let tagged = probe
+        .read()
+        .map_err(|error| format!("无法读取 {} 的媒体信息: {error}", path.display()))?;
+    reject_library_file_type(tagged.file_type(), &path)?;
+
+    let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
+    let title = tag.and_then(non_empty_title).unwrap_or_else(|| {
+        relative_path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("未知曲目")
+            .to_owned()
+    });
+    let artist = tag.and_then(non_empty_artist);
+    let album = tag.and_then(non_empty_album);
     let format = path
         .extension()
         .and_then(|extension| extension.to_str())
@@ -432,28 +415,37 @@ fn discover_track(
         title,
         artist,
         album,
-        duration: info
-            .duration()
-            .map(|duration| Duration::from_nanos(duration.nseconds())),
+        duration: Some(tagged.properties().duration()),
         format,
         file_size,
         modified_ns,
     })
 }
 
-fn tag_title(tags: &gst::TagList) -> Option<String> {
-    tags.get::<gst::tags::Title>()
-        .map(|value| value.get().to_owned())
+fn reject_library_file_type(file_type: FileType, path: &Path) -> Result<(), String> {
+    match file_type {
+        FileType::Opus => Err(format!("跳过暂不支持的 Opus 文件: {}", path.display())),
+        FileType::Ape => Err(format!("跳过不支持的 APE 文件: {}", path.display())),
+        _ => Ok(()),
+    }
 }
 
-fn tag_artist(tags: &gst::TagList) -> Option<String> {
-    tags.get::<gst::tags::Artist>()
-        .map(|value| value.get().to_owned())
+fn non_empty_title(tag: &lofty::tag::Tag) -> Option<String> {
+    tag.title()
+        .map(|value| value.into_owned())
+        .filter(|value| !value.trim().is_empty())
 }
 
-fn tag_album(tags: &gst::TagList) -> Option<String> {
-    tags.get::<gst::tags::Album>()
-        .map(|value| value.get().to_owned())
+fn non_empty_artist(tag: &lofty::tag::Tag) -> Option<String> {
+    tag.artist()
+        .map(|value| value.into_owned())
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn non_empty_album(tag: &lofty::tag::Tag) -> Option<String> {
+    tag.album()
+        .map(|value| value.into_owned())
+        .filter(|value| !value.trim().is_empty())
 }
 
 fn collect_audio_files(root: &Path, warnings: &mut Vec<String>) -> Vec<PathBuf> {
@@ -527,7 +519,10 @@ mod tests {
     #[test]
     fn audio_extension_check_is_case_insensitive() {
         assert!(is_audio_file(Path::new("hello.FLAC")));
-        assert!(is_audio_file(Path::new("hello.opus")));
+        assert!(is_audio_file(Path::new("hello.aiff")));
+        assert!(!is_audio_file(Path::new("hello.opus")));
+        assert!(!is_audio_file(Path::new("hello.ape")));
+        assert!(!is_audio_file(Path::new("hello.wma")));
         assert!(!is_audio_file(Path::new("cover.jpg")));
     }
 
@@ -545,6 +540,38 @@ mod tests {
         let mut warnings = Vec::new();
         let files = collect_audio_files(temp.path(), &mut warnings);
         assert_eq!(files, vec![temp.path().join("inside.MP3")]);
+    }
+
+    #[test]
+    fn lofty_probe_uses_filename_when_tags_are_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("无标签.wav");
+        write_silent_wav(&path, 1);
+        let track = discover_track(path.clone(), PathBuf::from("无标签.wav"), 1, 2).unwrap();
+        assert_eq!(track.title, "无标签");
+        assert!(track.artist.is_none());
+        assert!(track.album.is_none());
+        assert_eq!(track.format.as_deref(), Some("WAV"));
+        assert!(track.duration.is_some());
+    }
+
+    fn write_silent_wav(path: &Path, sample_rate: u32) {
+        let data = [0u8; 2];
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36u32 + data.len() as u32).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&sample_rate.to_le_bytes());
+        wav.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        wav.extend_from_slice(&data);
+        fs::write(path, wav).unwrap();
     }
 
     #[test]
