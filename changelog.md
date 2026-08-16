@@ -16,6 +16,7 @@
 
 - Linux CI / RPM 构建依赖改为 ALSA 与 SQLite，不再安装 GStreamer
 - Windows 发行包不再附带 GStreamer runtime，也不再设置 GST 环境变量
+- 发行材料附带 Apache-2.0 / MPL-2.0 全文，并列出 cpal、Symphonia、nucleo 等第三方许可证
 - CI 与 Release 改为从官方 GitHub release（jrsoftware/issrc is-6_7_1）下载 Inno Setup 6.7.1 并校验 SHA-256，替换 chocolatey 安装，消除 runner 预装版本漂移
 
 ### 依赖

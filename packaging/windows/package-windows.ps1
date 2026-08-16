@@ -15,15 +15,18 @@ $output = [System.IO.Path]::GetFullPath($OutputDir)
 $temporaryRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
 $packageName = "music-player-$Version-windows-x86_64"
 $stageRoot = Join-Path $temporaryRoot $packageName
-$thirdPartyLicenses = Join-Path $project "packaging\windows\licenses"
-$mplLicense = Join-Path $thirdPartyLicenses "MPL-2.0.txt"
+$licenseDir = Join-Path $project "packaging\licenses"
+$notices = Join-Path $licenseDir "THIRD-PARTY-NOTICES.txt"
+$mplLicense = Join-Path $licenseDir "MPL-2.0.txt"
+$apacheLicense = Join-Path $licenseDir "Apache-2.0.txt"
 
 foreach ($required in @(
     $executable,
     (Join-Path $project "assets\icons\music-player.ico"),
     (Join-Path $project "packaging\windows\ChineseSimplified.isl"),
-    (Join-Path $project "packaging\windows\THIRD-PARTY-NOTICES.txt"),
-    $mplLicense
+    $notices,
+    $mplLicense,
+    $apacheLicense
 )) {
     if (-not (Test-Path -LiteralPath $required)) {
         throw "Required packaging input was not found: $required"
@@ -38,19 +41,21 @@ New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
 Copy-Item -LiteralPath $executable -Destination (Join-Path $stageRoot "music-player.exe") -Force
 Copy-Item -LiteralPath (Join-Path $project "packaging\windows\music-player.cmd") -Destination $stageRoot
 Copy-Item -LiteralPath (Join-Path $project "packaging\windows\README-Windows.txt") -Destination $stageRoot
-Copy-Item -LiteralPath (Join-Path $project "packaging\windows\THIRD-PARTY-NOTICES.txt") -Destination $stageRoot
+Copy-Item -LiteralPath $notices -Destination $stageRoot
 Copy-Item -LiteralPath (Join-Path $project "assets\icons\music-player.ico") -Destination $stageRoot
 Copy-Item -LiteralPath (Join-Path $project "LICENSE") -Destination $stageRoot
 
 $stageLicenses = Join-Path $stageRoot "third-party-licenses"
 New-Item -ItemType Directory -Force -Path $stageLicenses | Out-Null
 Copy-Item -LiteralPath $mplLicense -Destination $stageLicenses
+Copy-Item -LiteralPath $apacheLicense -Destination $stageLicenses
 
 foreach ($required in @(
     (Join-Path $stageRoot "music-player.exe"),
     (Join-Path $stageRoot "LICENSE"),
     (Join-Path $stageRoot "THIRD-PARTY-NOTICES.txt"),
-    (Join-Path $stageLicenses "MPL-2.0.txt")
+    (Join-Path $stageLicenses "MPL-2.0.txt"),
+    (Join-Path $stageLicenses "Apache-2.0.txt")
 )) {
     if (-not (Test-Path -LiteralPath $required)) {
         throw "Staged package is missing required file: $required"

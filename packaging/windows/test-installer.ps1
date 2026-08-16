@@ -31,7 +31,8 @@ function Test-LicenseMaterial([string] $Directory) {
     $required = @(
         (Join-Path $Directory "LICENSE"),
         (Join-Path $Directory "THIRD-PARTY-NOTICES.txt"),
-        (Join-Path $Directory "third-party-licenses\MPL-2.0.txt")
+        (Join-Path $Directory "third-party-licenses\MPL-2.0.txt"),
+        (Join-Path $Directory "third-party-licenses\Apache-2.0.txt")
     )
     foreach ($file in $required) {
         if (-not (Test-Path -LiteralPath $file)) {

@@ -3,7 +3,7 @@ Version:        1.0.2
 Release:        1%{?dist}
 Summary:        Terminal music library player
 
-License:        MIT
+License:        MIT AND Apache-2.0 AND MPL-2.0 AND BSD-3-Clause
 URL:            https://github.com/HZ-TYZQ/tui-music-player
 Source0:        %{name}-%{version}.tar.gz
 Source1:        %{name}-%{version}-vendor.tar.gz
@@ -47,8 +47,8 @@ install -Dpm 0644 assets/icons/%{name}.svg %{buildroot}%{_datadir}/icons/hicolor
 install -Dpm 0644 assets/icons/%{name}-48.png %{buildroot}%{_datadir}/icons/hicolor/48x48/apps/%{name}.png
 
 %files
-%license LICENSE
-%doc README.md changelog.md
+%license LICENSE packaging/licenses/Apache-2.0.txt packaging/licenses/MPL-2.0.txt
+%doc README.md changelog.md packaging/licenses/THIRD-PARTY-NOTICES.txt
 %{_bindir}/%{name}
 %{_mandir}/man1/%{name}.1*
 %{_datadir}/applications/%{name}.desktop

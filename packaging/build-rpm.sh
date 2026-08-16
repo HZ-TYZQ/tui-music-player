@@ -47,6 +47,7 @@ tar -C "$project_dir" \
     packaging/music-player.desktop \
     packaging/music-player.spec \
     packaging/build-rpm.sh \
+    packaging/licenses \
     | tar -C "$work_dir/$source_name" -xf -
 tar -C "$work_dir" -czf "$source_archive" "$source_name"
 

@@ -30,7 +30,8 @@ Music Player for Windows 11 x86_64
 ----
 
 第三方 Rust crate 的许可证说明见 THIRD-PARTY-NOTICES.txt。
-Symphonia（MPL-2.0）全文见 third-party-licenses\MPL-2.0.txt。
+Apache-2.0 全文见 third-party-licenses\Apache-2.0.txt。
+MPL-2.0 全文见 third-party-licenses\MPL-2.0.txt。
 
 安全提示
 --------
