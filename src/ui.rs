@@ -251,11 +251,7 @@ fn playback_action_indicator(state: PlayState, theme: &Theme) -> (&'static str, 
 fn draw_visualizer(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     let block = Block::default()
         .borders(Borders::TOP)
-        .border_style(Style::new().fg(theme.border))
-        .title(Span::styled(
-            " 频谱 · 50 Hz → 8 kHz ",
-            Style::new().fg(theme.primary).bold(),
-        ));
+        .border_style(Style::new().fg(theme.border));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.is_empty() {

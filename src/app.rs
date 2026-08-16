@@ -23,14 +23,17 @@ pub enum Overlay {
     DeleteConfirm,
 }
 
-const SPECTRUM_ATTACK: f32 = 0.65;
-const SPECTRUM_DECAY: f32 = 0.18;
+// 频谱观感调参区（详见 plan/v1.0.3-plan.md 改动二）。
+const SPECTRUM_ATTACK: f32 = 0.85; // 上升沿响应，越大越跟手
+const SPECTRUM_DECAY: f32 = 0.28; // 下落沿衰减，越大落得越快
 const SPECTRUM_EPSILON: f32 = 0.001;
 const VISUALIZER_BARS: usize = 32;
 const VISUALIZER_MIN_HZ: f32 = 50.0;
 const VISUALIZER_MAX_HZ: f32 = 8_000.0;
-const VISUALIZER_LOW_FREQUENCY_GAIN: f32 = 0.65;
-const VISUALIZER_RESPONSE_GAMMA: f32 = 1.6;
+const VISUALIZER_LOW_FREQUENCY_GAIN: f32 = 1.0; // 中性基准；低频过强可调至 0.85~0.9
+const VISUALIZER_RESPONSE_GAMMA: f32 = 0.75; // < 1.0 提亮中低幅值
+/// dB 归一化上限；下限复用 player::SPECTRUM_THRESHOLD_DB（-72 dB）。
+const SPECTRUM_CEIL_DB: f32 = -12.0;
 
 pub struct App {
     pub library_dir: PathBuf,
@@ -679,8 +682,7 @@ fn map_spectrum_frame(frame: &[f32], sample_rate: u32) -> Vec<f32> {
                 VISUALIZER_MIN_HZ * frequency_ratio.powf(bar as f32 / VISUALIZER_BARS as f32);
             let upper_hz =
                 VISUALIZER_MIN_HZ * frequency_ratio.powf((bar + 1) as f32 / VISUALIZER_BARS as f32);
-            let center_hz = (lower_hz * upper_hz).sqrt();
-            let magnitude = interpolate_magnitude(frame, center_hz / bin_width);
+            let magnitude = band_max_magnitude(frame, bin_width, lower_hz, upper_hz);
             let frequency_position = (bar as f32 + 0.5) / VISUALIZER_BARS as f32;
             let frequency_gain = VISUALIZER_LOW_FREQUENCY_GAIN
                 + (1.0 - VISUALIZER_LOW_FREQUENCY_GAIN) * frequency_position;
@@ -689,25 +691,37 @@ fn map_spectrum_frame(frame: &[f32], sample_rate: u32) -> Vec<f32> {
         .collect()
 }
 
-fn interpolate_magnitude(frame: &[f32], position: f32) -> f32 {
-    let position = position.clamp(0.0, frame.len().saturating_sub(1) as f32);
-    let lower = position.floor() as usize;
-    let upper = position.ceil() as usize;
-    let fraction = position - lower as f32;
-    let magnitude = |index: usize| {
-        if frame[index].is_finite() {
-            frame[index]
-        } else {
-            SPECTRUM_THRESHOLD_DB
-        }
-    };
-    magnitude(lower) + (magnitude(upper) - magnitude(lower)) * fraction
+/// 取频段内 FFT bin 的最大 dB 幅值。bin 区间为半开区间 [start, end)，end 为
+/// exclusive 并 clamp 到 frame.len()，避免多吃右侧相邻频段的一个 bin。
+/// 区间为空或没有有限值时，退化到带中心频率最近的单个 bin；仍非有限则返回
+/// SPECTRUM_THRESHOLD_DB。
+fn band_max_magnitude(frame: &[f32], bin_width: f32, lower_hz: f32, upper_hz: f32) -> f32 {
+    if frame.is_empty() || !bin_width.is_finite() || bin_width <= 0.0 {
+        return SPECTRUM_THRESHOLD_DB;
+    }
+    let start = ((lower_hz / bin_width).floor().max(0.0) as usize).min(frame.len() - 1);
+    let end = ((upper_hz / bin_width).ceil().max(0.0) as usize).min(frame.len());
+    let best = frame[start..end]
+        .iter()
+        .copied()
+        .filter(|magnitude| magnitude.is_finite())
+        .fold(f32::NEG_INFINITY, f32::max);
+    if best.is_finite() {
+        return best;
+    }
+    let center_bin = ((lower_hz * upper_hz).sqrt() / bin_width).round() as usize;
+    let fallback = frame[center_bin.min(frame.len() - 1)];
+    if fallback.is_finite() {
+        fallback
+    } else {
+        SPECTRUM_THRESHOLD_DB
+    }
 }
 
 fn normalize_magnitude(magnitude: f32) -> f32 {
     if magnitude.is_finite() {
-        ((magnitude.clamp(SPECTRUM_THRESHOLD_DB, 0.0) - SPECTRUM_THRESHOLD_DB)
-            / -SPECTRUM_THRESHOLD_DB)
+        ((magnitude.clamp(SPECTRUM_THRESHOLD_DB, SPECTRUM_CEIL_DB) - SPECTRUM_THRESHOLD_DB)
+            / (SPECTRUM_CEIL_DB - SPECTRUM_THRESHOLD_DB))
             .clamp(0.0, 1.0)
     } else {
         0.0
@@ -988,8 +1002,15 @@ mod tests {
 
     #[test]
     fn spectrum_normalization_clamps_invalid_and_out_of_range_values() {
-        let normalized =
-            [-90.0, SPECTRUM_THRESHOLD_DB, -30.0, 0.0, 12.0, f32::NAN].map(normalize_magnitude);
+        let normalized = [
+            -90.0,
+            SPECTRUM_THRESHOLD_DB,
+            -42.0,
+            SPECTRUM_CEIL_DB,
+            0.0,
+            f32::NAN,
+        ]
+        .map(normalize_magnitude);
         assert_eq!(normalized, [0.0, 0.0, 0.5, 1.0, 1.0, 0.0]);
     }
 
@@ -1015,8 +1036,47 @@ mod tests {
         assert!(bass_bar < 8);
         assert!(treble_bar > 24);
         assert!(bass_bar < treble_bar);
-        assert!(bass.iter().all(|magnitude| *magnitude < 0.75));
+        // 峰值 bin 所在带取到 0 dB，归一化后为满幅。
+        assert!(bass[bass_bar] > 0.99);
+        // 低频段带窄于 bin 宽度，峰可能与两侧相邻带共享同一个 bin；非零带必须是
+        // 包含峰值带的连续小区间，其余带必须为 0。
+        let nonzero: Vec<usize> = bass
+            .iter()
+            .enumerate()
+            .filter(|(_, magnitude)| **magnitude > 0.0)
+            .map(|(index, _)| index)
+            .collect();
+        assert!(nonzero.contains(&bass_bar));
+        assert!(nonzero.len() <= 5);
+        assert!(nonzero.windows(2).all(|pair| pair[1] == pair[0] + 1));
         assert_eq!(map_spectrum_frame(&[], sample_rate), vec![0.0; 32]);
+    }
+
+    #[test]
+    fn band_max_magnitude_uses_half_open_bin_range() {
+        let bin_width = 10.0;
+        let frame = [-70.0, -30.0, -50.0, -20.0, -60.0];
+        // [10, 30) 映射到 bin 1..3：取 bin 1、2 的最大值，不含 bin 3 的 -20.0。
+        assert_eq!(band_max_magnitude(&frame, bin_width, 10.0, 30.0), -30.0);
+        // 单 bin 频段。
+        assert_eq!(band_max_magnitude(&frame, bin_width, 40.0, 45.0), -60.0);
+    }
+
+    #[test]
+    fn band_max_magnitude_ignores_non_finite_bins() {
+        let bin_width = 10.0;
+        let frame = [f32::NAN, -30.0, f32::NAN];
+        assert_eq!(band_max_magnitude(&frame, bin_width, 10.0, 30.0), -30.0);
+        // 区间内全 NaN 且带中心 bin 也非有限时，退化到 threshold 底。
+        let frame = [f32::NAN; 3];
+        assert_eq!(
+            band_max_magnitude(&frame, bin_width, 10.0, 30.0),
+            SPECTRUM_THRESHOLD_DB
+        );
+        assert_eq!(
+            band_max_magnitude(&[], bin_width, 10.0, 30.0),
+            SPECTRUM_THRESHOLD_DB
+        );
     }
 
     #[test]
