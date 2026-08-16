@@ -20,7 +20,7 @@ use crate::player::SPECTRUM_THRESHOLD_DB;
 
 pub const VISUALIZER_BARS: usize = 32;
 pub const VISUALIZER_MIN_HZ: f32 = 50.0;
-pub const VISUALIZER_MAX_HZ: f32 = 8_000.0;
+pub const VISUALIZER_MAX_HZ: f32 = 5_000.0;
 
 /// 高频提升强度（dB/oct，按段实际中心频率）。温和档；过强可调低。
 const EQ_DB_PER_OCTAVE: f32 = 1.5;
@@ -204,6 +204,8 @@ impl SpectrumProcessor {
             self.eq.fill(1.0);
             return;
         }
+        // GStreamer spectrum 公式：Δf = rate / (2·bands − 2)。当前 Rodio 输入是
+        // FFT-1024 的 512 个线性 bin，真实 Δf = rate / 1024；相对误差约 0.2%。
         let bin_width = self.sample_rate as f32 / (2 * self.bands - 2) as f32;
         let ratio = VISUALIZER_MAX_HZ / VISUALIZER_MIN_HZ;
         let mut bound = ((VISUALIZER_MIN_HZ / bin_width).ceil() as usize).min(self.bands);
