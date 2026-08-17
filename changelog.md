@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-17
+
 ### 播放与音乐库
 
 - 播放后端改为 Rodio 0.22（内置 Symphonia 0.5.5）+ CPAL，不再使用 GStreamer
@@ -12,12 +14,20 @@
 - 支持 MP3、FLAC、WAV、OGG/OGA Vorbis、M4A/AAC、AAC ADTS、AIFF
 - Opus 暂缓支持；APE、WMA 从支持列表移除，播放时明确拒绝
 
+### 界面
+
+- 播放/暂停指示器改为固定宽度的 ASCII 符号，避免 Windows 终端把 Unicode 图标画成 emoji
+- 播放进度改为 ASCII 进度条
+- 曲目列表按终端宽度自适应列，并用显示宽度截断
+- 频谱处理改为 CAVA 风格的 attack / gravity；可视化范围 50–5000 Hz，并去掉频谱标题文字
+
 ### 构建与发行
 
 - Linux CI / RPM 构建依赖改为 ALSA 与 SQLite，不再安装 GStreamer
 - Windows 发行包不再附带 GStreamer runtime，也不再设置 GST 环境变量
 - 发行材料附带 Apache-2.0 / MPL-2.0 全文，并列出 cpal、Symphonia、nucleo 等第三方许可证
 - CI 与 Release 改为从官方 GitHub release（jrsoftware/issrc is-6_7_1）下载 Inno Setup 6.7.1 并校验 SHA-256，替换 chocolatey 安装，消除 runner 预装版本漂移
+- 单元测试改用无声卡的 headless Player，避免 CI runner 因打不开默认音频设备失败
 
 ### 依赖
 

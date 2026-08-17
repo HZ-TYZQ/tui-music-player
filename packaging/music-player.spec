@@ -1,5 +1,5 @@
 Name:           music-player
-Version:        1.0.2
+Version:        1.1.0
 Release:        1%{?dist}
 Summary:        Terminal music library player
 
@@ -56,9 +56,11 @@ install -Dpm 0644 assets/icons/%{name}-48.png %{buildroot}%{_datadir}/icons/hico
 %{_datadir}/icons/hicolor/48x48/apps/%{name}.png
 
 %changelog
-* Sun Aug 16 2026 HZ-TYZQ - 1.0.2-1
+* Mon Aug 17 2026 HZ-TYZQ - 1.1.0-1
 - Replace GStreamer playback and Discoverer with Rodio and Lofty
+- Rebuild the spectrum from a PCM tap and rustfft
 - Build against ALSA; let rpmbuild generate runtime ELF dependencies
+- Ship Apache-2.0, MPL-2.0, and third-party notices
 
 * Sat Aug 15 2026 HZ-TYZQ - 1.0.2-1
 - Add Windows 11 x86_64 MSVC builds, tests, and release packaging
