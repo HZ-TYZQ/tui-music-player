@@ -26,8 +26,7 @@ Windows Installer 默认安装到当前用户目录，不要求管理员权限�
 
 第一版 Windows 包尚未进行 Authenticode 签名，Windows Defender SmartScreen 可能显示未知发布者提示。请只从项目 GitHub Release 下载，并使用同一 Release 中的 `SHA256SUMS.txt` 核对文件。
 
-Fedora 44 的 RPM 会自动声明运行依赖。本机源码构建必须在项目配置的
-`dev-fedora` 容器中进行，容器内需要：
+Fedora 44 的 RPM 会自动声明运行依赖。
 
 ```sh
 sudo dnf install \
@@ -97,7 +96,7 @@ Linux 没有显式设置 XDG 基础目录时，通常对应 `~/.config`、`~/.lo
 
 支持的音频格式：MP3、FLAC、WAV、OGG/OGA Vorbis、M4A/AAC、AAC ADTS、AIFF。Opus 暂缓支持；APE 与 WMA 不再支持。
 
-播放区域的图标表示按下 `Space` 后将执行的操作：播放中显示文本样式的 `⏸︎`，暂停时显示文本样式的 `▶︎`。
+播放区域的图标表示按下 `Space` 后将执行的操作：播放中显示文本样式的 `||`，暂停时显示文本样式的 `> `，替换Unicode字符提升Windows Terminal兼容性。
 
 ## 测试、RPM 与 Windows 发行包
 
@@ -107,7 +106,7 @@ Linux 没有显式设置 XDG 基础目录时，通常对应 `~/.config`、`~/.lo
 sudo dnf install rpm-build desktop-file-utils
 ```
 
-以下命令必须在 `dev-fedora` 容器中运行：
+建议容器中运行：
 
 ```sh
 cargo fmt --all -- --check
