@@ -1,0 +1,59 @@
+Third-party notices
+===================
+
+This package is a statically linked Rust binary. It does not ship a
+separate multimedia runtime. The following third-party crates are
+compiled into the program and are the licenses that apply to this
+distribution.
+
+Copyleft and Apache-only licenses
+---------------------------------
+
+- cpal 0.17.3 (via rodio) — Apache-2.0
+  https://github.com/RustAudio/cpal
+  License text: third-party-licenses\Apache-2.0.txt
+- approx 0.5.1 (via cpal) — Apache-2.0
+  https://github.com/brendanzab/approx
+  License text: third-party-licenses\Apache-2.0.txt
+- symphonia 0.5.5 and related crates (via rodio) — MPL-2.0
+  symphonia-core, symphonia-metadata, symphonia-utils-xiph,
+  symphonia-bundle-flac, symphonia-bundle-mp3, symphonia-codec-aac,
+  symphonia-codec-pcm, symphonia-codec-vorbis, symphonia-format-ogg,
+  symphonia-format-isomp4, symphonia-format-riff
+  https://github.com/pdeljanov/Symphonia
+  License text: third-party-licenses\MPL-2.0.txt
+  Source: the 0.5.5 crates at the URLs above and on crates.io
+- nucleo 0.5.0, nucleo-matcher 0.3.1 — MPL-2.0
+  https://github.com/helix-editor/nucleo
+  License text: third-party-licenses\MPL-2.0.txt
+  Source: the locked crate versions on crates.io
+- option-ext 0.2.0 — MPL-2.0
+  https://github.com/soc/option-ext
+  License text: third-party-licenses\MPL-2.0.txt
+  Source: the locked crate version on crates.io
+
+Permissive playback and metadata
+--------------------------------
+
+- rodio 0.22.2 — MIT OR Apache-2.0
+  https://github.com/RustAudio/rodio
+- lofty 0.25.1 — MIT OR Apache-2.0
+  https://github.com/Serial-ATA/lofty-rs
+- rustfft 6.4 — MIT OR Apache-2.0
+  https://github.com/ejmahler/RustFFT
+- encoding_rs 0.8.35 (via lofty / symphonia) —
+  (Apache-2.0 OR MIT) AND BSD-3-Clause
+  https://github.com/hsivonen/encoding_rs
+  BSD-3-Clause copyright: Copyright (c) 2016-2017 Mozilla Foundation
+
+Other Rust crates used by this application (UI, CLI, config, SQLite)
+are MIT and/or Apache-2.0, or equally permissive (including Unlicense,
+0BSD, Zlib, and WTFPL). Their license texts are available from the
+corresponding crates.io / GitHub sources listed in Cargo.lock.
+
+The installer's Chinese Simplified interface language is provided by
+the user-contributed Inno Setup translation maintained by Zhenghan
+Yang (attribution and source are preserved inside the file), vendored
+at build time from the Inno Setup source repository.
+
+Music Player itself is licensed under the MIT License; see LICENSE.

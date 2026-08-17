@@ -5,18 +5,39 @@ use std::time::Duration;
 
 use ratatui::prelude::*;
 use ratatui::widgets::{
-    Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap,
+    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
 };
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{App, Overlay};
 use crate::player::PlayState;
 use crate::theme::{DEFAULT_THEME, Theme};
+use crate::track::Track;
 
 const BASE_LAYOUT_HEIGHT: u16 = 11;
 const MAX_VISUALIZER_HEIGHT: u16 = 5;
 const MIN_VISUALIZER_HEIGHT: u16 = 2;
-const PAUSE_ACTION_ICON: &str = "⏸\u{fe0e} ";
-const PLAY_ACTION_ICON: &str = "▶\u{fe0e} ";
+/// 正在播放时 Space 会暂停。
+const PAUSE_ACTION_ICON: &str = "|| ";
+/// 暂停时 Space 会继续播放。
+const PLAY_ACTION_ICON: &str = ">  ";
+/// 已停止。
+const STOPPED_ICON: &str = "■  ";
+/// 非当前行的指示器占位。四种指示器均为 3 个显示列（所涉字符宽度皆为 1），
+/// 保证标题起始列不随播放状态变化而水平跳动。
+const INACTIVE_ICON: &str = "   ";
+
+/// 播放状态指示器列宽（与上面的指示器常量保持一致）。
+const LIST_ICON_WIDTH: usize = 3;
+/// 歌曲列表相邻列之间的空格数。
+const LIST_GAP_WIDTH: usize = 2;
+/// 格式列固定宽度。
+const FORMAT_COLUMN_WIDTH: usize = 6;
+const MIN_TITLE_WIDTH: usize = 12;
+const MIN_ARTIST_WIDTH: usize = 8;
+const MIN_ALBUM_WIDTH: usize = 8;
+/// List 的 highlight 符号（"▸ "）宽度；ratatui 会为所有行预留这部分宽度。
+const HIGHLIGHT_SYMBOL_WIDTH: usize = 2;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     draw_with_theme(frame, app, &DEFAULT_THEME);
@@ -115,13 +136,17 @@ fn draw_library(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         return;
     }
 
+    // 可用宽度：area 减去块边框（2 列）与 List 为所有行预留的 highlight 符号宽。
+    let usable = usize::from(area.width).saturating_sub(2 + HIGHLIGHT_SYMBOL_WIDTH);
+    let layout = track_row_layout(usable, app.duration_column_width as usize);
+    let muted = Style::new().fg(theme.muted);
     let items = app.visible_indices().iter().filter_map(|index| {
         let track = app.tracks.get(*index)?;
         let current = app.playing_index == Some(*index);
         let (icon, icon_style) = if current {
             playback_action_indicator(app.player.state(), theme)
         } else {
-            ("  ", Style::new().fg(theme.primary))
+            (INACTIVE_ICON, Style::new().fg(theme.primary))
         };
         let title_style = Style::new().fg(theme.primary);
         let title_style = if current {
@@ -129,25 +154,17 @@ fn draw_library(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         } else {
             title_style
         };
-        let artist = track.artist.as_deref().unwrap_or("未知歌手");
-        let album = track.album.as_deref().unwrap_or("未知专辑");
-        let format = track.format.as_deref().unwrap_or("?");
-        let duration = track
-            .duration
-            .map(fmt_duration)
-            .unwrap_or_else(|| "--:--".into());
-        Some(ListItem::new(Line::from(vec![
+        let mut columns = track_row_columns(track, &layout).into_iter();
+        let title = columns.next()?;
+        let mut spans = vec![
             Span::styled(icon, icon_style),
-            Span::styled(track.display_title(), title_style),
-            "  ".into(),
-            Span::styled(artist, Style::new().fg(theme.muted)),
-            Span::styled(" · ", Style::new().fg(theme.muted)),
-            Span::styled(album, Style::new().fg(theme.muted)),
-            Span::styled(" · ", Style::new().fg(theme.muted)),
-            Span::styled(format, Style::new().fg(theme.muted)),
-            Span::styled(" · ", Style::new().fg(theme.muted)),
-            Span::styled(duration, Style::new().fg(theme.muted)),
-        ])))
+            Span::styled(title, title_style),
+        ];
+        for column in columns {
+            spans.push(Span::styled("  ", muted));
+            spans.push(Span::styled(column, muted));
+        }
+        Some(ListItem::new(Line::from(spans)))
     });
 
     let list = List::new(items)
@@ -175,17 +192,13 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     let now = match app.current_track() {
         Some(track) => {
             let (icon, style) = playback_action_indicator(app.player.state(), theme);
+            let budget = usize::from(top[0].width).saturating_sub(LIST_ICON_WIDTH);
+            let (title, artist) =
+                now_playing_text(track.display_title(), track.artist.as_deref(), budget);
             Line::from(vec![
                 Span::styled(icon, style),
-                Span::styled(track.display_title(), Style::new().fg(theme.primary).bold()),
-                Span::styled(
-                    track
-                        .artist
-                        .as_ref()
-                        .map(|artist| format!(" — {artist}"))
-                        .unwrap_or_default(),
-                    Style::new().fg(theme.muted),
-                ),
+                Span::styled(title, Style::new().fg(theme.primary).bold()),
+                Span::styled(artist, Style::new().fg(theme.muted)),
             ])
         }
         None => Line::from(Span::styled("■ 未在播放", Style::new().fg(theme.muted))),
@@ -219,16 +232,18 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         .map(|duration| position.as_secs_f64() / duration.as_secs_f64())
         .unwrap_or_default()
         .clamp(0.0, 1.0);
-    let label = format!(
-        "{} / {}",
-        fmt_duration(position),
-        duration.map(fmt_duration).unwrap_or_else(|| "--:--".into())
-    );
+    let position_label = fmt_duration(position);
+    let duration_label = duration.map(fmt_duration).unwrap_or_else(|| "--:--".into());
+    // 布局：' ' pos ' ' bar ' ' dur，bar 填满剩余宽度。
+    let bar_width =
+        (rows[1].width as usize).saturating_sub(position_label.len() + duration_label.len() + 3);
+    let bar = ascii_progress_bar(ratio, bar_width);
     frame.render_widget(
-        Gauge::default()
-            .gauge_style(Style::new().fg(theme.primary))
-            .ratio(ratio)
-            .label(label),
+        Paragraph::new(Line::from(vec![
+            Span::styled(format!(" {position_label} "), Style::new().fg(theme.muted)),
+            Span::styled(bar, Style::new().fg(theme.primary)),
+            Span::styled(format!(" {duration_label}"), Style::new().fg(theme.muted)),
+        ])),
         rows[1],
     );
 }
@@ -237,26 +252,23 @@ fn playback_action_indicator(state: PlayState, theme: &Theme) -> (&'static str, 
     match state {
         PlayState::Playing => (PAUSE_ACTION_ICON, Style::new().fg(theme.primary).bold()),
         PlayState::Paused => (PLAY_ACTION_ICON, Style::new().fg(theme.primary).bold()),
-        PlayState::Stopped => ("■ ", Style::new().fg(theme.muted)),
+        PlayState::Stopped => (STOPPED_ICON, Style::new().fg(theme.muted)),
     }
 }
 
 fn draw_visualizer(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     let block = Block::default()
         .borders(Borders::TOP)
-        .border_style(Style::new().fg(theme.border))
-        .title(Span::styled(
-            " 频谱 · 50 Hz → 8 kHz ",
-            Style::new().fg(theme.primary).bold(),
-        ));
+        .border_style(Style::new().fg(theme.border));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.is_empty() {
         return;
     }
 
-    let bar_count = app.spectrum.len().min(usize::from(inner.width).div_ceil(2));
-    let bars = resample_spectrum(&app.spectrum, bar_count);
+    let spectrum = app.spectrum_bars();
+    let bar_count = spectrum.len().min(usize::from(inner.width).div_ceil(2));
+    let bars = resample_spectrum(spectrum, bar_count);
     let plot_width = bars.len().saturating_mul(2).saturating_sub(1);
     let left_padding = (usize::from(inner.width).saturating_sub(plot_width)) / 2;
     let right_padding = usize::from(inner.width)
@@ -563,6 +575,201 @@ pub fn fmt_duration(duration: Duration) -> String {
     }
 }
 
+/// 生成 width 列的 ASCII 进度条：'=' 已播放、'>' 播放头、'-' 未播放。
+/// filled 用 floor 保证比例未满时不虚报；ratio >= 1.0 时全部填满为 '='，
+/// 末尾不再保留播放头。
+fn ascii_progress_bar(ratio: f64, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let ratio = ratio.clamp(0.0, 1.0);
+    if ratio >= 1.0 {
+        return "=".repeat(width);
+    }
+    let filled = (ratio * width as f64).floor() as usize;
+    let mut bar = "=".repeat(filled);
+    bar.push('>');
+    bar.push_str(&"-".repeat(width - filled - 1));
+    bar
+}
+
+/// 按终端显示宽度截断：超出时保留 max_width-1 列内容后接 "…"（宽度 1）。
+/// CJK 字符按 2 列、控制字符按 0 列计（unicode-width）。
+fn truncate_display(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_owned();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    // 为省略号预留 1 列。
+    let mut used = 0;
+    let mut truncated = String::new();
+    for character in text.chars() {
+        let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
+        if used + character_width + 1 > max_width {
+            break;
+        }
+        truncated.push(character);
+        used += character_width;
+    }
+    truncated.push('…');
+    truncated
+}
+
+/// 把一列文本截断并补齐到 width 列；right 时右对齐（用于时长列）。
+fn column_text(text: &str, width: usize, right: bool) -> String {
+    let truncated = truncate_display(text, width);
+    let padding = " ".repeat(width.saturating_sub(UnicodeWidthStr::width(truncated.as_str())));
+    if right {
+        format!("{padding}{truncated}")
+    } else {
+        format!("{truncated}{padding}")
+    }
+}
+
+/// 歌曲列表一行的列宽布局：按可用宽度从完整到精简逐级收缩，分档阈值由各列
+/// 最小宽、固定列宽与分隔宽推导，不写死魔法数字。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TrackRowLayout {
+    title: usize,
+    artist: Option<usize>,
+    album: Option<usize>,
+    format: bool,
+    duration: usize,
+}
+
+fn track_row_layout(usable: usize, duration_width: usize) -> TrackRowLayout {
+    // (artist, album, format)：从最完整到最精简依次尝试。
+    let tiers = [
+        (true, true, true),
+        (true, true, false),
+        (true, false, false),
+        (false, false, false),
+    ];
+    for &(show_artist, show_album, show_format) in &tiers {
+        let content_columns =
+            2 + usize::from(show_artist) + usize::from(show_album) + usize::from(show_format);
+        let minimum = LIST_ICON_WIDTH
+            + duration_width
+            + if show_format { FORMAT_COLUMN_WIDTH } else { 0 }
+            + MIN_TITLE_WIDTH
+            + if show_artist { MIN_ARTIST_WIDTH } else { 0 }
+            + if show_album { MIN_ALBUM_WIDTH } else { 0 }
+            + LIST_GAP_WIDTH * (content_columns - 1);
+        if usable >= minimum {
+            return distribute_row_width(
+                usable,
+                duration_width,
+                show_artist,
+                show_album,
+                show_format,
+            );
+        }
+    }
+    // 再窄也退化为仅标题+时长；全局最小终端尺寸（42 列）保证走不到这里。
+    distribute_row_width(usable, duration_width, false, false, false)
+}
+
+/// 先满足各列最小宽，再把剩余空间按比例分配给可变列；取整余数归标题（最高优先级）。
+fn distribute_row_width(
+    usable: usize,
+    duration_width: usize,
+    show_artist: bool,
+    show_album: bool,
+    show_format: bool,
+) -> TrackRowLayout {
+    let content_columns =
+        2 + usize::from(show_artist) + usize::from(show_album) + usize::from(show_format);
+    let fixed = LIST_ICON_WIDTH
+        + duration_width
+        + LIST_GAP_WIDTH * (content_columns - 1)
+        + if show_format { FORMAT_COLUMN_WIDTH } else { 0 };
+    let variable_area = usable.saturating_sub(fixed);
+    if show_artist && show_album {
+        let extra =
+            variable_area.saturating_sub(MIN_TITLE_WIDTH + MIN_ARTIST_WIDTH + MIN_ALBUM_WIDTH);
+        let mut title = MIN_TITLE_WIDTH + extra * 45 / 100;
+        let artist = MIN_ARTIST_WIDTH + extra * 30 / 100;
+        let album = MIN_ALBUM_WIDTH + extra * 25 / 100;
+        title += variable_area.saturating_sub(title + artist + album);
+        TrackRowLayout {
+            title,
+            artist: Some(artist),
+            album: Some(album),
+            format: show_format,
+            duration: duration_width,
+        }
+    } else if show_artist {
+        let extra = variable_area.saturating_sub(MIN_TITLE_WIDTH + MIN_ARTIST_WIDTH);
+        let mut title = MIN_TITLE_WIDTH + extra * 60 / 100;
+        let artist = MIN_ARTIST_WIDTH + extra * 40 / 100;
+        title += variable_area.saturating_sub(title + artist);
+        TrackRowLayout {
+            title,
+            artist: Some(artist),
+            album: None,
+            format: show_format,
+            duration: duration_width,
+        }
+    } else {
+        TrackRowLayout {
+            title: variable_area,
+            artist: None,
+            album: None,
+            format: show_format,
+            duration: duration_width,
+        }
+    }
+}
+
+/// 按布局生成一行各列的文本（已截断并补齐到列宽），时长列右对齐。
+fn track_row_columns(track: &Track, layout: &TrackRowLayout) -> Vec<String> {
+    let mut columns = vec![column_text(track.display_title(), layout.title, false)];
+    if let Some(width) = layout.artist {
+        columns.push(column_text(
+            track.artist.as_deref().unwrap_or("未知歌手"),
+            width,
+            false,
+        ));
+    }
+    if let Some(width) = layout.album {
+        columns.push(column_text(
+            track.album.as_deref().unwrap_or("未知专辑"),
+            width,
+            false,
+        ));
+    }
+    if layout.format {
+        columns.push(column_text(
+            track.format.as_deref().unwrap_or("?"),
+            FORMAT_COLUMN_WIDTH,
+            false,
+        ));
+    }
+    let duration = track
+        .duration
+        .map(fmt_duration)
+        .unwrap_or_else(|| "--:--".into());
+    columns.push(column_text(&duration, layout.duration, true));
+    columns
+}
+
+/// 把 "标题 — 歌手" 作为一个整体截到 budget 列：标题完整则剩余预算交给
+/// " — 歌手" 段截断；标题本身超宽则截标题、舍弃歌手段。两段拼接后保证
+/// 不超过 budget 列。
+fn now_playing_text(title: &str, artist: Option<&str>, budget: usize) -> (String, String) {
+    if UnicodeWidthStr::width(title) <= budget {
+        let remaining = budget - UnicodeWidthStr::width(title);
+        let artist = artist
+            .map(|artist| format!(" — {artist}"))
+            .unwrap_or_default();
+        (title.to_owned(), truncate_display(&artist, remaining))
+    } else {
+        (truncate_display(title, budget), String::new())
+    }
+}
+
 #[allow(dead_code)]
 fn _path_reference(path: &Path) -> &Path {
     path
@@ -570,6 +777,8 @@ fn _path_reference(path: &Path) -> &Path {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
 
     #[test]
@@ -611,16 +820,144 @@ mod tests {
     fn playback_icon_describes_the_space_key_action() {
         assert_eq!(
             playback_action_indicator(PlayState::Playing, &DEFAULT_THEME).0,
-            "⏸\u{fe0e} "
+            PAUSE_ACTION_ICON
         );
         assert_eq!(
             playback_action_indicator(PlayState::Paused, &DEFAULT_THEME).0,
-            "▶\u{fe0e} "
+            PLAY_ACTION_ICON
         );
         assert_eq!(
             playback_action_indicator(PlayState::Stopped, &DEFAULT_THEME).0,
-            "■ "
+            STOPPED_ICON
         );
+    }
+
+    #[test]
+    fn playback_icons_have_fixed_display_width() {
+        // 指示器均为 ASCII/单宽字符，chars().count() 即显示列数。
+        for state in [PlayState::Playing, PlayState::Paused, PlayState::Stopped] {
+            assert_eq!(
+                playback_action_indicator(state, &DEFAULT_THEME)
+                    .0
+                    .chars()
+                    .count(),
+                3
+            );
+        }
+        assert_eq!(INACTIVE_ICON.chars().count(), 3);
+    }
+
+    #[test]
+    fn ascii_progress_bar_has_fixed_width_and_expected_charset() {
+        for width in 0..=40 {
+            for ratio in [0.0, 0.25, 0.5, 0.99, 1.0] {
+                let bar = ascii_progress_bar(ratio, width);
+                assert_eq!(bar.chars().count(), width);
+                assert!(bar.chars().all(|cell| matches!(cell, '=' | '>' | '-')));
+            }
+        }
+    }
+
+    #[test]
+    fn ascii_progress_bar_renders_head_and_completion() {
+        assert_eq!(ascii_progress_bar(0.0, 10), ">---------");
+        assert_eq!(ascii_progress_bar(0.5, 10), "=====>----");
+        // floor 不虚报：99.9% 仍未走完，播放头保留在最右列。
+        assert_eq!(ascii_progress_bar(0.999, 10), "=========>");
+        // 100% 全部填满，末尾不留 '>'。
+        assert_eq!(ascii_progress_bar(1.0, 10), "==========");
+        assert_eq!(ascii_progress_bar(0.5, 1), ">");
+        assert_eq!(ascii_progress_bar(1.0, 1), "=");
+        assert_eq!(ascii_progress_bar(0.5, 0), "");
+    }
+
+    #[test]
+    fn truncate_display_limits_by_terminal_width() {
+        assert_eq!(truncate_display("hello", 10), "hello");
+        assert_eq!(truncate_display("hello world", 8), "hello w…");
+        // CJK 按 2 列计，省略号占 1 列。
+        assert_eq!(truncate_display("你好世界", 5), "你好…");
+        assert_eq!(truncate_display("ab你好cd", 6), "ab你…");
+        assert_eq!(truncate_display("abc", 1), "…");
+        assert_eq!(truncate_display("abc", 0), "");
+    }
+
+    #[test]
+    fn track_row_layout_tiers_follow_derived_min_widths() {
+        let duration = 5;
+        let full_min = LIST_ICON_WIDTH
+            + MIN_TITLE_WIDTH
+            + MIN_ARTIST_WIDTH
+            + MIN_ALBUM_WIDTH
+            + FORMAT_COLUMN_WIDTH
+            + duration
+            + LIST_GAP_WIDTH * 4;
+        let layout = track_row_layout(full_min, duration);
+        assert!(layout.artist.is_some() && layout.album.is_some() && layout.format);
+        let layout = track_row_layout(full_min - 1, duration);
+        assert!(layout.artist.is_some() && layout.album.is_some() && !layout.format);
+
+        let no_album_min =
+            LIST_ICON_WIDTH + MIN_TITLE_WIDTH + MIN_ARTIST_WIDTH + duration + LIST_GAP_WIDTH * 2;
+        let layout = track_row_layout(no_album_min, duration);
+        assert!(layout.artist.is_some() && layout.album.is_none() && !layout.format);
+        let layout = track_row_layout(no_album_min - 1, duration);
+        assert!(layout.artist.is_none() && layout.album.is_none() && !layout.format);
+    }
+
+    #[test]
+    fn track_row_columns_respect_the_layout_width() {
+        let track = Track {
+            path: PathBuf::from("/music/长标题.flac"),
+            relative_path: PathBuf::from("长标题.flac"),
+            title: "这是一首名字特别特别长的歌曲标题".to_owned(),
+            artist: Some("一个名字同样很长的歌手".to_owned()),
+            album: Some("一张名字也非常非常长的专辑".to_owned()),
+            duration: Some(Duration::from_secs(3_661)),
+            format: Some("MPEG-4 AAC".to_owned()),
+            file_size: 1,
+            modified_ns: 1,
+        };
+        let duration_width = 7;
+        for usable in [22usize, 30, 42, 50, 66, 90] {
+            let layout = track_row_layout(usable, duration_width);
+            let columns = track_row_columns(&track, &layout);
+            let text_width = columns
+                .iter()
+                .map(|column| UnicodeWidthStr::width(column.as_str()))
+                .sum::<usize>()
+                + LIST_GAP_WIDTH * (columns.len() - 1);
+            // 行内容（不含指示器）必须恰好填满 usable - LIST_ICON_WIDTH。
+            assert_eq!(text_width + LIST_ICON_WIDTH, usable, "usable={usable}");
+            // 超长 format 被截断，不能打破固定列宽。
+            assert!(!columns.iter().any(|column| column.contains("MPEG-4")));
+        }
+    }
+
+    #[test]
+    fn now_playing_text_truncates_title_and_artist_as_a_whole() {
+        // 整体不超宽：完整保留。
+        let (title, artist) = now_playing_text("春日影", Some("MyGO!!!!!"), 30);
+        assert_eq!(title, "春日影");
+        assert_eq!(artist, " — MyGO!!!!!");
+
+        // 标题放下、整体超宽：歌手段被截，合计恰好 12 列。
+        let (title, artist) = now_playing_text("春日影", Some("MyGO!!!!!"), 12);
+        assert_eq!(title, "春日影");
+        assert_eq!(
+            UnicodeWidthStr::width(title.as_str()) + UnicodeWidthStr::width(artist.as_str()),
+            12
+        );
+
+        // 标题本身就超宽：截标题，歌手段舍弃。
+        let (title, artist) = now_playing_text("这是一首名字特别特别长的歌", Some("X"), 9);
+        assert_eq!(artist, "");
+        assert!(UnicodeWidthStr::width(title.as_str()) <= 9);
+
+        // 没有歌手时不产生多余内容。
+        let (title, artist) = now_playing_text("歌", None, 30);
+        assert_eq!(title, "歌");
+        assert_eq!(artist, "");
     }
 
     #[test]

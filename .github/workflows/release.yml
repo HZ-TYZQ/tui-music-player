@@ -62,10 +62,7 @@ jobs:
         run: |
           dnf install -y \
             git rust cargo rpm-build tar gzip findutils desktop-file-utils \
-            gstreamer1-devel \
-            gstreamer1-plugins-base-devel \
-            gstreamer1-plugins-bad-free-devel \
-            gstreamer1-plugins-good \
+            alsa-lib-devel \
             sqlite-devel
       - uses: actions/checkout@v6
         with:
@@ -91,13 +88,6 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2
-      - name: Install GStreamer MSVC development files
-        shell: pwsh
-        run: >-
-          ./packaging/windows/install-gstreamer.ps1
-          -InstallDir "$env:RUNNER_TEMP\gstreamer"
-          -InstallType devel
-          -ExportGitHubEnvironment
       - name: Build and test release binary
         run: |
           cargo build --release --locked
@@ -125,18 +115,11 @@ jobs:
           ./packaging/windows/install-innosetup.ps1
           -InstallDir "$env:RUNNER_TEMP\innosetup"
           -ExportGitHubEnvironment
-      - name: Install private GStreamer runtime
-        shell: pwsh
-        run: >-
-          ./packaging/windows/install-gstreamer.ps1
-          -InstallDir "$env:RUNNER_TEMP\gstreamer-runtime"
-          -InstallType runtime
       - name: Build Portable ZIP and Installer
         shell: pwsh
         run: >-
           ./packaging/windows/package-windows.ps1
           -ProjectDir "$env:GITHUB_WORKSPACE"
-          -RuntimeDir "$env:RUNNER_TEMP\gstreamer-runtime"
           -MusicPlayerExe "$env:GITHUB_WORKSPACE\windows-binary\music-player.exe"
           -Version "${{ needs.metadata.outputs.version }}"
           -OutputDir "$env:RUNNER_TEMP\windows-dist"

@@ -56,7 +56,7 @@ fn run_application() -> Result<(), String> {
         })?
     };
 
-    // GStreamer、播放列表目录及工作线程都在切换终端模式前初始化。
+    // 播放器、播放列表目录及工作线程都在切换终端模式前初始化。
     // 这样启动失败时错误仍是普通、可复制的终端文本。
     let mut app = App::new(library_dir, paths, config, warning, save_config_on_exit)?;
     let mut terminal = setup_terminal().map_err(|error| format!("无法初始化终端: {error}"))?;
@@ -74,7 +74,14 @@ fn run_application() -> Result<(), String> {
 fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> io::Result<()> {
     while !app.should_quit {
         terminal.draw(|frame| ui::draw(frame, app))?;
-        if event::poll(Duration::from_millis(50))?
+        // 频谱开启时把主循环提到约 50Hz，与 spectrum 源 20ms interval 对齐；
+        // 关闭时回到 50ms 降低空闲唤醒。
+        let poll_ms = if app.config.visualizer_enabled {
+            20
+        } else {
+            50
+        };
+        if event::poll(Duration::from_millis(poll_ms))?
             && let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
         {

@@ -4,14 +4,14 @@ Music Player for Windows 11 x86_64
 启动
 ----
 
-安装版可以从开始菜单启动。Portable ZIP 解压后运行 music-player.cmd。
-在 Windows Terminal 中也可以执行：
+安装版可以从开始菜单启动。Portable ZIP 解压后运行 music-player.exe
+或 music-player.cmd。在 Windows Terminal 中也可以执行：
 
-    .\music-player.cmd
+    .\music-player.exe
 
 使用 --set-library 可以永久设置音乐库：
 
-    .\music-player.cmd --set-library "D:\Music"
+    .\music-player.exe --set-library "D:\Music"
 
 用户数据
 --------
@@ -23,15 +23,15 @@ Music Player for Windows 11 x86_64
 运行依赖
 --------
 
-本发行包已经私有携带 GStreamer runtime，SQLite 也已编入程序。
-用户不需要另外安装 GStreamer 或 SQLite，也不应把包内的 DLL 单独移动出去。
+播放使用 Rodio / WASAPI，媒体信息使用 Lofty，SQLite 已编入程序。
+用户不需要另外安装 GStreamer 或 SQLite。
 
-许可与源码
-----------
+许可
+----
 
-包内附带 GStreamer 1.28.6 官方许可文本与 LGPL 2.1 全文（见
-third-party-licenses 目录），以及 HZ-TYZQ 提供对应源码的书面承诺，详见
-THIRD-PARTY-NOTICES.txt 与 SOURCE-CODE-OFFER.txt。
+第三方 Rust crate 的许可证说明见 THIRD-PARTY-NOTICES.txt。
+Apache-2.0 全文见 third-party-licenses\Apache-2.0.txt。
+MPL-2.0 全文见 third-party-licenses\MPL-2.0.txt。
 
 安全提示
 --------

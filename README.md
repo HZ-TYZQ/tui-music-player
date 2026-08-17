@@ -1,13 +1,13 @@
 # Music Player
 
-Music Player 是一个用 Rust 编写的终端音乐库播放器。它使用 GStreamer 播放和读取媒体信息，用 SQLite 保存可随时重建的增量索引，并把配置与播放列表保存在平台标准用户目录中。
+Music Player 是一个用 Rust 编写的终端音乐库播放器。它使用 Rodio 播放、Lofty 读取媒体信息，用 SQLite 保存可随时重建的增量索引，并把配置与播放列表保存在平台标准用户目录中。
 
 ## 功能
 
 - 后台递归扫描音乐库，界面不会因大型目录而停止响应
 - 展示标题、歌手、专辑、格式、时长和实时播放进度
 - 播放、平滑暂停、前后跳转、音量和静音
-- 内置实时音频频谱，将 50–8000 Hz 对数映射为最多 32 根柱，并支持记忆开关状态
+- 内置实时音频频谱，将 50–5000 Hz 对数映射为最多 32 根柱，并支持记忆开关状态
 - 顺序、列表循环、单曲循环和随机四种播放模式
 - Unicode 友好的实时模糊搜索，覆盖标题、歌手、专辑和相对路径
 - 临时播放队列与持久命名播放列表
@@ -19,8 +19,8 @@ Music Player 是一个用 Rust 编写的终端音乐库播放器。它使用 GSt
 
 项目正式支持 Fedora Linux 与 Windows 11 x86_64：
 
-- Fedora RPM 使用系统的 GStreamer、常用解码插件和 SQLite
-- Windows Installer 与 Portable ZIP 私有携带 GStreamer runtime，并把 SQLite 编入程序，用户无需另行安装依赖
+- Fedora RPM 使用系统的 ALSA/PipeWire 与 SQLite
+- Windows Installer 与 Portable ZIP 把 SQLite 编入程序，通过 WASAPI 输出，用户无需另行安装解码运行时
 
 Windows Installer 默认安装到当前用户目录，不要求管理员权限，并创建开始菜单入口。Portable ZIP 解压后运行 `music-player.cmd`。两种 Windows 发行包都可在 Windows Terminal 中使用。
 
@@ -32,9 +32,7 @@ Fedora 44 的 RPM 会自动声明运行依赖。本机源码构建必须在项�
 ```sh
 sudo dnf install \
   rust cargo \
-  gstreamer1-devel \
-  gstreamer1-plugins-base-devel \
-  gstreamer1-plugins-bad-free-devel \
+  alsa-lib-devel \
   sqlite-devel
 ```
 
@@ -95,7 +93,9 @@ music-player --help
 
 Linux 没有显式设置 XDG 基础目录时，通常对应 `~/.config`、`~/.local/share` 和 `~/.cache`。Windows Installer 和 Portable ZIP 使用相同的 AppData 目录；升级、删除 Portable 文件或卸载程序都不会删除这些用户数据。
 
-频谱默认开启，退出程序时会把 `visualizer_enabled` 与音量、静音等设置一起保存。频谱由 GStreamer `spectrum` 直接分析当前歌曲，不会采集麦克风或其他应用的声音。
+频谱默认开启，退出程序时会把 `visualizer_enabled` 与音量、静音等设置一起保存。频谱从当前播放的 PCM 分析，不会采集麦克风或其他应用的声音。
+
+支持的音频格式：MP3、FLAC、WAV、OGG/OGA Vorbis、M4A/AAC、AAC ADTS、AIFF。Opus 暂缓支持；APE 与 WMA 不再支持。
 
 播放区域的图标表示按下 `Space` 后将执行的操作：播放中显示文本样式的 `⏸︎`，暂停时显示文本样式的 `▶︎`。
 
@@ -120,7 +120,7 @@ sudo dnf install ./packaging/rpmbuild/RPMS/x86_64/music-player-1.0.2-1.fc44.x86_
 
 RPM 构建脚本会生成离线 vendor 归档、二进制 RPM 和 SRPM。安装后的 RPM 同时提供命令行程序、man 手册、桌面菜单入口、可缩放 SVG 图标和 48 px 兼容图标。升级使用 `sudo dnf upgrade <RPM 路径>`，卸载使用 `sudo dnf remove music-player`。
 
-Windows MSVC 构建、测试和打包由 GitHub Actions 的 Windows runner 完成。工作流固定并校验官方 GStreamer MSVC x86_64 安装包，生成：
+Windows MSVC 构建、测试和打包由 GitHub Actions 的 Windows runner 完成，生成：
 
 - `music-player-<版本>-windows-x86_64-setup.exe`
 - `music-player-<版本>-windows-x86_64-portable.zip`

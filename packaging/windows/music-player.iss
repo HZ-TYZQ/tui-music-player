@@ -54,7 +54,7 @@ Name: "addtopath"; Description: "{cm:AddToPath}"; Flags: unchecked
 Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\Music Player"; Filename: "{app}\music-player.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\music-player.ico"
+Name: "{autoprograms}\Music Player"; Filename: "{app}\music-player.exe"; WorkingDir: "{app}"; IconFilename: "{app}\music-player.ico"
 
 [Code]
 function NormalizePath(Value: String): String;
