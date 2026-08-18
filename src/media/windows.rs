@@ -21,7 +21,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PM_REMOVE, PeekMessageW, PostMessageW, RegisterClassExW, TranslateMessage, WM_DESTROY, WM_QUIT,
     WNDCLASSEXW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
-use windows::core::{HSTRING, Interface, w};
+use windows::core::{HSTRING, w};
 
 use crate::player::PlayState;
 use crate::track::RepeatMode;
@@ -35,7 +35,7 @@ pub fn run(
     shutdown: Receiver<()>,
     ready: Sender<Result<(), String>>,
 ) {
-    let result = (|| -> Result<(), String> {
+    let result = (|| -> Result<(HWND, SystemMediaTransportControls), String> {
         unsafe { RoInitialize(RO_INIT_SINGLETHREADED) }
             .map_err(|error| format!("无法初始化 Windows Runtime: {error}"))?;
         let hwnd = unsafe { create_hidden_window() }?;
@@ -131,9 +131,7 @@ fn setup_controls(
     let button_commands = commands.clone();
     controls.ButtonPressed(&TypedEventHandler::new(
         move |_, args: windows::core::Ref<SystemMediaTransportControlsButtonPressedEventArgs>| {
-            let Some(args) = args.ok() else {
-                return Ok(());
-            };
+            let args = args.ok()?;
             let button = args.Button()?;
             let command = if button == SystemMediaTransportControlsButton::Play {
                 Some(MediaCommand::Play)
@@ -160,9 +158,7 @@ fn setup_controls(
     let position_commands = commands.clone();
     controls.PlaybackPositionChangeRequested(&TypedEventHandler::new(
         move |_, args: windows::core::Ref<PlaybackPositionChangeRequestedEventArgs>| {
-            let Some(args) = args.ok() else {
-                return Ok(());
-            };
+            let args = args.ok()?;
             let span = args.RequestedPlaybackPosition()?;
             let _ = position_commands.send(MediaCommand::SeekTo {
                 position: timespan_to_duration(span),
@@ -174,18 +170,14 @@ fn setup_controls(
 
     let repeat_commands = commands.clone();
     controls.AutoRepeatModeChangeRequested(&TypedEventHandler::new(move |_, args| {
-        let Some(args) = args.ok() else {
-            return Ok(());
-        };
+        let args = args.ok()?;
         let mode = args.RequestedAutoRepeatMode()?;
         let _ = repeat_commands.send(MediaCommand::SetRepeat(repeat_from_smtc(mode)));
         Ok(())
     }))?;
 
     controls.ShuffleEnabledChangeRequested(&TypedEventHandler::new(move |_, args| {
-        let Some(args) = args.ok() else {
-            return Ok(());
-        };
+        let args = args.ok()?;
         let enabled = args.RequestedShuffleEnabled()?;
         let _ = commands.send(MediaCommand::SetShuffle(enabled));
         Ok(())
