@@ -5,8 +5,9 @@ use std::time::{Duration, Instant};
 
 use windows::Foundation::{TimeSpan, TypedEventHandler};
 use windows::Media::{
-    MediaPlaybackAutoRepeatMode, MediaPlaybackStatus, MediaPlaybackType,
-    PlaybackPositionChangeRequestedEventArgs, SystemMediaTransportControls,
+    AutoRepeatModeChangeRequestedEventArgs, MediaPlaybackAutoRepeatMode, MediaPlaybackStatus,
+    MediaPlaybackType, PlaybackPositionChangeRequestedEventArgs,
+    ShuffleEnabledChangeRequestedEventArgs, SystemMediaTransportControls,
     SystemMediaTransportControlsButton, SystemMediaTransportControlsButtonPressedEventArgs,
     SystemMediaTransportControlsTimelineProperties,
 };
@@ -35,9 +36,11 @@ pub fn run(
     shutdown: Receiver<()>,
     ready: Sender<Result<(), String>>,
 ) {
+    let mut runtime_ready = false;
     let result = (|| -> Result<(HWND, SystemMediaTransportControls), String> {
         unsafe { RoInitialize(RO_INIT_SINGLETHREADED) }
             .map_err(|error| format!("无法初始化 Windows Runtime: {error}"))?;
+        runtime_ready = true;
         let hwnd = unsafe { create_hidden_window() }?;
         let interop = windows::core::factory::<
             SystemMediaTransportControls,
@@ -58,8 +61,10 @@ pub fn run(
         }
         Err(error) => {
             let _ = ready.send(Err(error));
-            unsafe {
-                RoUninitialize();
+            if runtime_ready {
+                unsafe {
+                    RoUninitialize();
+                }
             }
             let _ = shutdown.recv();
             return;
@@ -169,19 +174,23 @@ fn setup_controls(
     ))?;
 
     let repeat_commands = commands.clone();
-    controls.AutoRepeatModeChangeRequested(&TypedEventHandler::new(move |_, args| {
-        let args = args.ok()?;
-        let mode = args.RequestedAutoRepeatMode()?;
-        let _ = repeat_commands.send(MediaCommand::SetRepeat(repeat_from_smtc(mode)));
-        Ok(())
-    }))?;
+    controls.AutoRepeatModeChangeRequested(&TypedEventHandler::new(
+        move |_, args: windows::core::Ref<AutoRepeatModeChangeRequestedEventArgs>| {
+            let args = args.ok()?;
+            let mode = args.RequestedAutoRepeatMode()?;
+            let _ = repeat_commands.send(MediaCommand::SetRepeat(repeat_from_smtc(mode)));
+            Ok(())
+        },
+    ))?;
 
-    controls.ShuffleEnabledChangeRequested(&TypedEventHandler::new(move |_, args| {
-        let args = args.ok()?;
-        let enabled = args.RequestedShuffleEnabled()?;
-        let _ = commands.send(MediaCommand::SetShuffle(enabled));
-        Ok(())
-    }))?;
+    controls.ShuffleEnabledChangeRequested(&TypedEventHandler::new(
+        move |_, args: windows::core::Ref<ShuffleEnabledChangeRequestedEventArgs>| {
+            let args = args.ok()?;
+            let enabled = args.RequestedShuffleEnabled()?;
+            let _ = commands.send(MediaCommand::SetShuffle(enabled));
+            Ok(())
+        },
+    ))?;
     Ok(())
 }
 
