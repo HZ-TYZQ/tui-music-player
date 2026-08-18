@@ -8,7 +8,8 @@ Music Player 是一个用 Rust 编写的终端音乐库播放器。它使用 Rod
 - 展示标题、歌手、专辑、格式、时长和实时播放进度
 - 播放、平滑暂停、前后跳转、音量和静音
 - 内置实时音频频谱，将 50–5000 Hz 对数映射为最多 32 根柱，并支持记忆开关状态
-- 顺序、列表循环、单曲循环和随机四种播放模式
+- 循环（顺序 / 列表 / 单曲）与随机可独立组合；随机按整轮重洗
+- 可被 Linux 媒体控制器（MPRIS）和 Windows 系统媒体控件（SMTC）识别与遥控
 - Unicode 友好的实时模糊搜索，覆盖标题、歌手、专辑和相对路径
 - 临时播放队列与持久命名播放列表
 - 播放列表中的失效歌曲会被标记并跳过；删除列表绝不删除音乐文件
@@ -69,7 +70,8 @@ music-player --help
 | `-`、`=` | 音量降低/提高 5% |
 | `m` | 静音 |
 | `n/p` | 下一首/上一首历史 |
-| `z` | 切换播放模式 |
+| `z` | 循环方式：顺序 / 列表循环 / 单曲循环 |
+| `s` | 开/关随机播放 |
 | `v` | 显示/隐藏音频频谱 |
 | `/` | 实时模糊搜索 |
 | `r` | 后台重新扫描 |
@@ -114,7 +116,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test --all-targets --locked
 
 ./packaging/build-rpm.sh
-sudo dnf install ./packaging/rpmbuild/RPMS/x86_64/music-player-1.1.0-1.fc44.x86_64.rpm
+sudo dnf install ./packaging/rpmbuild/RPMS/x86_64/music-player-1.2.0-1.fc44.x86_64.rpm
 ```
 
 RPM 构建脚本会生成离线 vendor 归档、二进制 RPM 和 SRPM。安装后的 RPM 同时提供命令行程序、man 手册、桌面菜单入口、可缩放 SVG 图标和 48 px 兼容图标。升级使用 `sudo dnf upgrade <RPM 路径>`，卸载使用 `sudo dnf remove music-player`。

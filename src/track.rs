@@ -42,37 +42,76 @@ impl Track {
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PlayMode {
+pub enum RepeatMode {
     #[default]
+    None,
+    All,
+    One,
+}
+
+impl RepeatMode {
+    pub fn next(self) -> Self {
+        match self {
+            Self::None => Self::All,
+            Self::All => Self::One,
+            Self::One => Self::None,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "顺序",
+            Self::All => "列表循环",
+            Self::One => "单曲循环",
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlaybackMode {
+    pub repeat: RepeatMode,
+    pub shuffle: bool,
+}
+
+impl PlaybackMode {
+    pub fn label(self) -> String {
+        if self.shuffle {
+            format!("{} · 随机", self.repeat.label())
+        } else {
+            self.repeat.label().to_owned()
+        }
+    }
+}
+
+/// 仅用于读取 v1.1.0 及更早的 `play_mode` 字段。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LegacyPlayMode {
     Sequential,
     RepeatAll,
     RepeatOne,
     Shuffle,
 }
 
-impl PlayMode {
-    pub const ALL: [Self; 4] = [
-        Self::Sequential,
-        Self::RepeatAll,
-        Self::RepeatOne,
-        Self::Shuffle,
-    ];
-
-    pub fn next(self) -> Self {
+impl LegacyPlayMode {
+    pub fn into_playback_mode(self) -> PlaybackMode {
         match self {
-            Self::Sequential => Self::RepeatAll,
-            Self::RepeatAll => Self::RepeatOne,
-            Self::RepeatOne => Self::Shuffle,
-            Self::Shuffle => Self::Sequential,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Sequential => "顺序",
-            Self::RepeatAll => "列表循环",
-            Self::RepeatOne => "单曲循环",
-            Self::Shuffle => "随机",
+            Self::Sequential => PlaybackMode {
+                repeat: RepeatMode::None,
+                shuffle: false,
+            },
+            Self::RepeatAll => PlaybackMode {
+                repeat: RepeatMode::All,
+                shuffle: false,
+            },
+            Self::RepeatOne => PlaybackMode {
+                repeat: RepeatMode::One,
+                shuffle: false,
+            },
+            Self::Shuffle => PlaybackMode {
+                repeat: RepeatMode::None,
+                shuffle: true,
+            },
         }
     }
 }

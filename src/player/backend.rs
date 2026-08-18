@@ -168,6 +168,19 @@ impl Player {
     }
 
     pub fn play(&mut self, path: &Path) -> Result<(), String> {
+        self.load(path, PlayState::Playing)
+    }
+
+    /// 解码并装上曲目，保持暂停。Rodio 的 `append` 会解除 `stopped`，
+    /// 必须在 append 之前把 Player 置为 paused，否则会直接出声。
+    pub fn open(&mut self, path: &Path) -> Result<(), String> {
+        self.load(path, PlayState::Paused)
+    }
+
+    fn load(&mut self, path: &Path, target: PlayState) -> Result<(), String> {
+        if !matches!(target, PlayState::Playing | PlayState::Paused) {
+            return Err("内部错误: load 只能进入 Playing 或 Paused".to_owned());
+        }
         if !path.is_file() {
             return Err(format!("音频文件不存在: {}", path.display()));
         }
@@ -201,8 +214,14 @@ impl Player {
             .map_err(|error| format!("无法识别或解码 {}: {error}", absolute.display()))?;
         let duration = decoder.total_duration();
 
+        if target == PlayState::Paused {
+            self.backend.pause();
+        }
         let generation = self.advance_generation();
         self.backend.stop();
+        if target == PlayState::Paused {
+            self.backend.pause();
+        }
 
         let tap = PcmTap::new(
             decoder,
@@ -219,30 +238,43 @@ impl Player {
         });
 
         self.apply_volume();
-        self.backend.play();
-        self.state = PlayState::Playing;
+        if target == PlayState::Playing {
+            self.backend.play();
+        } else {
+            self.backend.pause();
+        }
+        self.state = target;
         self.current_path = Some(absolute);
         self.current_duration = duration;
         self.set_forced_position(Duration::ZERO);
-        self.is_playing.store(true, Ordering::Relaxed);
+        self.is_playing
+            .store(target == PlayState::Playing, Ordering::Relaxed);
         self.refresh_spectrum_live();
         Ok(())
     }
 
+    pub fn pause(&mut self) {
+        if self.state == PlayState::Playing {
+            self.backend.pause();
+            self.state = PlayState::Paused;
+            self.is_playing.store(false, Ordering::Relaxed);
+            self.refresh_spectrum_live();
+        }
+    }
+
+    pub fn resume(&mut self) {
+        if self.state == PlayState::Paused {
+            self.backend.play();
+            self.state = PlayState::Playing;
+            self.is_playing.store(true, Ordering::Relaxed);
+            self.refresh_spectrum_live();
+        }
+    }
+
     pub fn toggle_pause(&mut self) {
         match self.state {
-            PlayState::Playing => {
-                self.backend.pause();
-                self.state = PlayState::Paused;
-                self.is_playing.store(false, Ordering::Relaxed);
-                self.refresh_spectrum_live();
-            }
-            PlayState::Paused => {
-                self.backend.play();
-                self.state = PlayState::Playing;
-                self.is_playing.store(true, Ordering::Relaxed);
-                self.refresh_spectrum_live();
-            }
+            PlayState::Playing => self.pause(),
+            PlayState::Paused => self.resume(),
             PlayState::Stopped => {}
         }
     }
@@ -279,21 +311,36 @@ impl Player {
         self.current_duration
     }
 
-    pub fn seek_relative(&self, offset_seconds: i64) {
+    pub fn seek_to(&self, pos: Duration) -> bool {
         if self.state == PlayState::Stopped {
-            return;
+            return false;
         }
-        let current = self.position();
-        let offset = Duration::from_secs(offset_seconds.unsigned_abs());
-        let requested = if offset_seconds.is_negative() {
-            current.saturating_sub(offset)
-        } else {
-            current.saturating_add(offset)
-        };
-        let target = clamp_seek_target(requested, self.current_duration);
+        let target = clamp_seek_target(pos, self.current_duration);
         if self.backend.try_seek(target).is_ok() {
             self.set_forced_position(target);
+            true
+        } else {
+            false
         }
+    }
+
+    pub fn seek_relative(&self, offset_seconds: i64) {
+        let _ = self.seek_relative_micros(offset_seconds.saturating_mul(1_000_000));
+    }
+
+    /// 相对当前进度偏移。正值前进，负值后退。成功 seek 返回 `Some(新位置)`。
+    /// 调用方负责把越过曲尾的情况当成 Next；本方法只 saturate 到 0 并 clamp 末端。
+    pub fn seek_relative_micros(&self, offset_micros: i64) -> Option<Duration> {
+        if self.state == PlayState::Stopped {
+            return None;
+        }
+        let current = self.position();
+        let requested = if offset_micros.is_negative() {
+            current.saturating_sub(Duration::from_micros(offset_micros.unsigned_abs()))
+        } else {
+            current.saturating_add(Duration::from_micros(offset_micros as u64))
+        };
+        self.seek_to(requested).then_some(self.position())
     }
 
     pub fn set_volume(&self, percent: u8) {

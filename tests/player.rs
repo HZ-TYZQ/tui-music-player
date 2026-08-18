@@ -303,6 +303,42 @@ fn high_sample_rate_spectrum_reports_source_rate() {
     assert_eq!(rate, Some(96_000));
 }
 
+#[test]
+fn open_loads_paused_without_starting_playback() {
+    let temp = tempfile::tempdir().unwrap();
+    let wav = temp.path().join("open.wav");
+    write_test_wav(&wav, 2.0);
+    let mut player = Player::new_for_tests().unwrap();
+    player.open(&wav).unwrap();
+    assert_eq!(player.state(), PlayState::Paused);
+    assert!(player.position() < Duration::from_millis(50));
+    sleep(Duration::from_millis(120));
+    assert_eq!(player.state(), PlayState::Paused);
+    assert!(
+        player.position() < Duration::from_millis(80),
+        "open() 后进度不应推进，实际 {:?}",
+        player.position()
+    );
+    player.resume();
+    assert_eq!(player.state(), PlayState::Playing);
+}
+
+#[test]
+fn seek_to_moves_to_requested_position() {
+    let temp = tempfile::tempdir().unwrap();
+    let wav = temp.path().join("seek.wav");
+    write_test_wav(&wav, 3.0);
+    let mut player = Player::new_for_tests().unwrap();
+    player.play(&wav).unwrap();
+    assert!(player.seek_to(Duration::from_millis(1500)));
+    let position = player.position();
+    assert!(
+        position >= Duration::from_millis(1400) && position < Duration::from_millis(1700),
+        "seek_to(1.5s) 实际 {:?}",
+        position
+    );
+}
+
 fn write_test_wav_at_rate(path: &Path, duration_secs: f32, sample_rate: u32) {
     let sample_count = (sample_rate as f32 * duration_secs) as usize;
     let mut samples = Vec::with_capacity(sample_count * 2);

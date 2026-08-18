@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::track::PlayMode;
+use crate::track::{LegacyPlayMode, RepeatMode};
 
 const APP_DIR: &str = "tui-music-player";
 const CONFIG_VERSION: u32 = 1;
@@ -50,15 +50,43 @@ fn missing_dir(name: &str) -> io::Error {
     )
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AppConfig {
     pub version: u32,
     pub library_dir: Option<PathBuf>,
     pub volume: u8,
     pub muted: bool,
-    pub play_mode: PlayMode,
+    pub repeat: RepeatMode,
+    pub shuffle: bool,
     pub visualizer_enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+struct RawConfig {
+    version: u32,
+    library_dir: Option<PathBuf>,
+    volume: u8,
+    muted: bool,
+    repeat: Option<RepeatMode>,
+    shuffle: Option<bool>,
+    play_mode: Option<LegacyPlayMode>,
+    visualizer_enabled: bool,
+}
+
+impl Default for RawConfig {
+    fn default() -> Self {
+        Self {
+            version: CONFIG_VERSION,
+            library_dir: None,
+            volume: 100,
+            muted: false,
+            repeat: None,
+            shuffle: None,
+            play_mode: None,
+            visualizer_enabled: true,
+        }
+    }
 }
 
 impl Default for AppConfig {
@@ -68,13 +96,36 @@ impl Default for AppConfig {
             library_dir: None,
             volume: 100,
             muted: false,
-            play_mode: PlayMode::Sequential,
+            repeat: RepeatMode::None,
+            shuffle: false,
             visualizer_enabled: true,
         }
     }
 }
 
 impl AppConfig {
+    fn from_raw(raw: RawConfig) -> Self {
+        let mode = if raw.repeat.is_some() || raw.shuffle.is_some() {
+            crate::track::PlaybackMode {
+                repeat: raw.repeat.unwrap_or_default(),
+                shuffle: raw.shuffle.unwrap_or(false),
+            }
+        } else {
+            raw.play_mode
+                .map(LegacyPlayMode::into_playback_mode)
+                .unwrap_or_default()
+        };
+        Self {
+            version: raw.version,
+            library_dir: raw.library_dir,
+            volume: raw.volume.min(100),
+            muted: raw.muted,
+            repeat: mode.repeat,
+            shuffle: mode.shuffle,
+            visualizer_enabled: raw.visualizer_enabled,
+        }
+    }
+
     pub fn load(path: &Path) -> io::Result<(Self, Option<String>)> {
         let contents = match fs::read_to_string(path) {
             Ok(contents) => contents,
@@ -84,21 +135,20 @@ impl AppConfig {
             Err(error) => return Err(error),
         };
 
-        match toml::from_str::<Self>(&contents) {
-            Ok(mut config) => {
-                if config.version != CONFIG_VERSION {
+        match toml::from_str::<RawConfig>(&contents) {
+            Ok(raw) => {
+                if raw.version != CONFIG_VERSION {
                     return Ok((
                         Self::default(),
                         Some(format!(
                             "配置文件 {} 的版本 {} 不受支持（当前版本 {}）",
                             path.display(),
-                            config.version,
+                            raw.version,
                             CONFIG_VERSION
                         )),
                     ));
                 }
-                config.volume = config.volume.min(100);
-                Ok((config, None))
+                Ok((Self::from_raw(raw), None))
             }
             Err(error) => Ok((
                 Self::default(),
@@ -156,21 +206,57 @@ mod tests {
         let config = AppConfig {
             volume: 75,
             muted: true,
-            play_mode: PlayMode::Shuffle,
+            repeat: RepeatMode::None,
+            shuffle: true,
             visualizer_enabled: false,
             ..AppConfig::default()
         };
         config.save(&path).unwrap();
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("shuffle = true"));
+        assert!(!saved.contains("play_mode"));
         let (loaded, warning) = AppConfig::load(&path).unwrap();
         assert!(warning.is_none());
         assert_eq!(loaded.volume, 75);
         assert!(loaded.muted);
-        assert_eq!(loaded.play_mode, PlayMode::Shuffle);
+        assert_eq!(loaded.repeat, RepeatMode::None);
+        assert!(loaded.shuffle);
         assert!(!loaded.visualizer_enabled);
 
         fs::write(&path, "version = 1\nvolume = 255\n").unwrap();
         let (loaded, _) = AppConfig::load(&path).unwrap();
         assert_eq!(loaded.volume, 100);
+    }
+
+    #[test]
+    fn legacy_play_mode_shuffle_migrates() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        fs::write(
+            &path,
+            "version = 1\nvolume = 75\nmuted = false\nplay_mode = \"shuffle\"\n",
+        )
+        .unwrap();
+        let (loaded, warning) = AppConfig::load(&path).unwrap();
+        assert!(warning.is_none());
+        assert_eq!(loaded.repeat, RepeatMode::None);
+        assert!(loaded.shuffle);
+        assert!(loaded.visualizer_enabled);
+    }
+
+    #[test]
+    fn new_fields_win_over_legacy_play_mode() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        fs::write(
+            &path,
+            "version = 1\nrepeat = \"all\"\nplay_mode = \"shuffle\"\n",
+        )
+        .unwrap();
+        let (loaded, warning) = AppConfig::load(&path).unwrap();
+        assert!(warning.is_none());
+        assert_eq!(loaded.repeat, RepeatMode::All);
+        assert!(!loaded.shuffle);
     }
 
     #[test]
@@ -204,6 +290,8 @@ mod tests {
 
         assert!(warning.is_none());
         assert!(loaded.visualizer_enabled);
+        assert_eq!(loaded.repeat, RepeatMode::None);
+        assert!(!loaded.shuffle);
     }
 
     #[test]

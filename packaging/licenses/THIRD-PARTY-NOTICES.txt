@@ -31,6 +31,10 @@ Copyleft and Apache-only licenses
   https://github.com/soc/option-ext
   License text: third-party-licenses\MPL-2.0.txt
   Source: the locked crate version on crates.io
+- mpris-server 0.10.0 (Linux) — MPL-2.0
+  https://github.com/SeaDve/mpris-server
+  License text: third-party-licenses\MPL-2.0.txt
+  Source: the locked crate version on crates.io
 
 Permissive playback and metadata
 --------------------------------

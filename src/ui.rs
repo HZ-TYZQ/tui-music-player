@@ -188,7 +188,7 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     frame.render_widget(block, area);
 
     let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(inner);
-    let top = Layout::horizontal([Constraint::Min(10), Constraint::Length(30)]).split(rows[0]);
+    let top = Layout::horizontal([Constraint::Min(10), Constraint::Length(38)]).split(rows[0]);
     let now = match app.current_track() {
         Some(track) => {
             let (icon, style) = playback_action_indicator(app.player.state(), theme);
@@ -212,8 +212,8 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     };
     frame.render_widget(
         Paragraph::new(format!(
-            "{} · 音量 {} · 队列 {}",
-            app.config.play_mode.label(),
+            "{} · {} · 队列 {}",
+            app.playback_mode().label(),
             volume,
             app.queue.len()
         ))
@@ -385,7 +385,8 @@ fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme) {
                 "- / =          音量降低 / 提高 5%",
                 "m              静音",
                 "n / p          下一首 / 上一首历史",
-                "z              切换播放模式",
+                "z              循环方式：顺序 / 列表 / 单曲",
+                "s              开 / 关随机播放",
                 "v              显示 / 隐藏音频频谱",
                 "/              实时模糊搜索",
                 "r              后台重新扫描",
@@ -395,7 +396,7 @@ fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme) {
                 "q              退出",
             ],
             62,
-            19,
+            20,
             theme,
         ),
         Overlay::Playlists => draw_playlists(frame, app, theme),

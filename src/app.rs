@@ -2,17 +2,18 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::config::{AppConfig, AppPaths};
 use crate::library::{LibraryEvent, LibraryWorker};
+use crate::media::{MediaCommand, MediaEvent};
 use crate::player::{PlayState, Player, PlayerEvent};
 use crate::playlist::PlaylistStore;
 use crate::search::SearchIndex;
 use crate::spectrum::SpectrumProcessor;
-use crate::track::{PlayMode, Track};
+use crate::track::{PlaybackMode, RepeatMode, Track};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Overlay {
@@ -22,6 +23,12 @@ pub enum Overlay {
     PlaylistTracks,
     NameInput,
     DeleteConfirm,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BagUpdate {
+    Reanchor,
+    Leave,
 }
 
 pub struct App {
@@ -52,6 +59,9 @@ pub struct App {
     rng_state: u64,
     save_config_on_exit: bool,
     pending_selected_path: Option<PathBuf>,
+    shuffle_order: Vec<usize>,
+    shuffle_cursor: usize,
+    media_events: Vec<MediaEvent>,
 }
 
 impl App {
@@ -135,6 +145,9 @@ impl App {
                 .as_nanos() as u64,
             save_config_on_exit,
             pending_selected_path: None,
+            shuffle_order: Vec::new(),
+            shuffle_cursor: 0,
+            media_events: Vec::new(),
         })
     }
 
@@ -169,15 +182,16 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => self.select_next(),
             KeyCode::Up | KeyCode::Char('k') => self.select_previous(),
             KeyCode::Enter => self.play_selected(),
-            KeyCode::Char(' ') => self.player.toggle_pause(),
-            KeyCode::Left | KeyCode::Char('h') => self.player.seek_relative(-10),
-            KeyCode::Right | KeyCode::Char('l') => self.player.seek_relative(10),
+            KeyCode::Char(' ') => self.toggle_or_start(),
+            KeyCode::Left | KeyCode::Char('h') => self.seek_rel_micros(-10_000_000),
+            KeyCode::Right | KeyCode::Char('l') => self.seek_rel_micros(10_000_000),
             KeyCode::Char('-') => self.change_volume(-5),
             KeyCode::Char('=') | KeyCode::Char('+') => self.change_volume(5),
             KeyCode::Char('m') => self.toggle_mute(),
             KeyCode::Char('n') => self.play_next(false),
             KeyCode::Char('p') => self.play_previous(),
-            KeyCode::Char('z') => self.cycle_mode(),
+            KeyCode::Char('z') => self.cycle_repeat(),
+            KeyCode::Char('s') => self.toggle_shuffle(),
             KeyCode::Char('v') => self.toggle_visualizer(),
             KeyCode::Char('/') => {
                 self.search_active = true;
@@ -270,6 +284,14 @@ impl App {
         self.playing_index = current_path
             .as_ref()
             .and_then(|path| self.index_for_path(path));
+        if self.config.shuffle {
+            if let Some(current) = self.playing_index {
+                self.reanchor_shuffle_bag(current);
+            } else {
+                self.shuffle_order.clear();
+                self.shuffle_cursor = 0;
+            }
+        }
         self.pending_selected_path = selected_path;
         self.restore_pending_selection();
         self.scanning = false;
@@ -298,11 +320,11 @@ impl App {
 
     fn play_selected(&mut self) {
         if let Some(index) = self.selected_track_index() {
-            self.play_index(index, true);
+            self.play_index(index, true, BagUpdate::Reanchor);
         }
     }
 
-    fn play_index(&mut self, index: usize, remember_current: bool) -> bool {
+    fn play_index(&mut self, index: usize, remember_current: bool, bag: BagUpdate) -> bool {
         let Some(track) = self.tracks.get(index) else {
             return false;
         };
@@ -315,7 +337,13 @@ impl App {
         {
             self.history.push(current.path.clone());
         }
-        match self.player.play(&path) {
+        let autoplay = self.player.state() != PlayState::Paused;
+        let result = if autoplay {
+            self.player.play(&path)
+        } else {
+            self.player.open(&path)
+        };
+        match result {
             Ok(()) => {
                 self.playing_index = Some(index);
                 self.message = None;
@@ -326,6 +354,10 @@ impl App {
                 {
                     self.selected = visible;
                 }
+                match bag {
+                    BagUpdate::Reanchor if self.config.shuffle => self.reanchor_shuffle_bag(index),
+                    BagUpdate::Reanchor | BagUpdate::Leave => {}
+                }
                 true
             }
             Err(error) => {
@@ -335,9 +367,9 @@ impl App {
         }
     }
 
-    fn play_path(&mut self, path: &Path, remember_current: bool) -> bool {
+    fn play_path(&mut self, path: &Path, remember_current: bool, bag: BagUpdate) -> bool {
         self.index_for_path(path)
-            .map(|index| self.play_index(index, remember_current))
+            .map(|index| self.play_index(index, remember_current, bag))
             .unwrap_or_else(|| {
                 self.message = Some(format!("歌曲不存在，已跳过: {}", path.display()));
                 false
@@ -352,7 +384,7 @@ impl App {
         let max_attempts = self.tracks.len().saturating_add(self.queue.len()).max(1);
         for _ in 0..max_attempts {
             if let Some(path) = self.queue.pop_front() {
-                if self.play_path(&path, true) {
+                if self.play_path(&path, true, BagUpdate::Leave) {
                     return;
                 }
                 continue;
@@ -362,7 +394,7 @@ impl App {
                 self.playing_index = None;
                 return;
             };
-            if self.play_index(next, true) {
+            if self.play_index(next, true, BagUpdate::Leave) {
                 return;
             }
         }
@@ -373,34 +405,88 @@ impl App {
 
     fn next_library_index(&mut self, natural_end: bool) -> Option<usize> {
         let current = self.playing_index.or_else(|| self.selected_track_index());
-        match self.config.play_mode {
-            PlayMode::RepeatOne if natural_end => current,
-            PlayMode::Shuffle => {
-                if self.tracks.len() == 1 {
-                    Some(0)
-                } else {
-                    let current = current.unwrap_or(0);
-                    let mut next = self.random_index(self.tracks.len());
-                    if next == current {
-                        next = (next + 1) % self.tracks.len();
-                    }
-                    Some(next)
-                }
+        if self.config.shuffle {
+            if natural_end && self.config.repeat == RepeatMode::One {
+                return current;
             }
-            PlayMode::RepeatAll | PlayMode::RepeatOne => {
+            return self.next_from_shuffle_bag(current);
+        }
+        match self.config.repeat {
+            RepeatMode::One if natural_end => current,
+            RepeatMode::All | RepeatMode::One if !self.tracks.is_empty() => {
                 Some((current.unwrap_or(0) + 1) % self.tracks.len())
             }
-            PlayMode::Sequential => match current {
+            RepeatMode::All | RepeatMode::One => None,
+            RepeatMode::None => match current {
                 Some(index) if index + 1 < self.tracks.len() => Some(index + 1),
-                None => Some(0),
+                None if !self.tracks.is_empty() => Some(0),
                 _ => None,
             },
         }
     }
 
+    fn next_from_shuffle_bag(&mut self, current: Option<usize>) -> Option<usize> {
+        if self.tracks.is_empty() {
+            return None;
+        }
+        if self.shuffle_order.is_empty() {
+            self.reanchor_shuffle_bag(current.unwrap_or(0));
+        }
+        if self.shuffle_cursor >= self.shuffle_order.len() {
+            match self.config.repeat {
+                RepeatMode::None => return None,
+                RepeatMode::All | RepeatMode::One => {
+                    let avoid = self.shuffle_order.last().copied().or(current).unwrap_or(0);
+                    self.reshuffle_round(avoid);
+                }
+            }
+        }
+        let next = self.shuffle_order.get(self.shuffle_cursor).copied()?;
+        self.shuffle_cursor += 1;
+        Some(next)
+    }
+
+    fn reanchor_shuffle_bag(&mut self, current: usize) {
+        if self.tracks.is_empty() {
+            self.shuffle_order.clear();
+            self.shuffle_cursor = 0;
+            return;
+        }
+        let current = current.min(self.tracks.len() - 1);
+        let mut rest: Vec<usize> = (0..self.tracks.len())
+            .filter(|index| *index != current)
+            .collect();
+        self.shuffle_slice(&mut rest);
+        self.shuffle_order = std::iter::once(current).chain(rest).collect();
+        self.shuffle_cursor = 1;
+    }
+
+    fn reshuffle_round(&mut self, avoid_first: usize) {
+        let mut order: Vec<usize> = (0..self.tracks.len()).collect();
+        self.shuffle_slice(&mut order);
+        if order.len() > 1 && order[0] == avoid_first {
+            let swap = (1..order.len())
+                .find(|index| order[*index] != avoid_first)
+                .unwrap_or(1);
+            order.swap(0, swap);
+        }
+        self.shuffle_order = order;
+        self.shuffle_cursor = 0;
+    }
+
+    fn shuffle_slice(&mut self, items: &mut [usize]) {
+        if items.len() < 2 {
+            return;
+        }
+        for index in (1..items.len()).rev() {
+            let other = self.random_index(index + 1);
+            items.swap(index, other);
+        }
+    }
+
     fn play_previous(&mut self) {
         while let Some(path) = self.history.pop() {
-            if self.play_path(&path, false) {
+            if self.play_path(&path, false, BagUpdate::Reanchor) {
                 return;
             }
         }
@@ -445,9 +531,191 @@ impl App {
         );
     }
 
-    fn cycle_mode(&mut self) {
-        self.config.play_mode = self.config.play_mode.next();
-        self.message = Some(format!("播放模式：{}", self.config.play_mode.label()));
+    fn cycle_repeat(&mut self) {
+        self.config.repeat = self.config.repeat.next();
+        self.message = Some(format!("循环：{}", self.config.repeat.label()));
+    }
+
+    fn toggle_shuffle(&mut self) {
+        self.config.shuffle = !self.config.shuffle;
+        if self.config.shuffle {
+            if let Some(current) = self.playing_index.or_else(|| self.selected_track_index()) {
+                self.reanchor_shuffle_bag(current);
+            }
+            self.message = Some("已开启随机播放".to_owned());
+        } else {
+            self.shuffle_order.clear();
+            self.shuffle_cursor = 0;
+            self.message = Some("已关闭随机播放".to_owned());
+        }
+    }
+
+    fn toggle_or_start(&mut self) {
+        match self.player.state() {
+            PlayState::Playing => self.player.pause(),
+            PlayState::Paused => self.player.resume(),
+            PlayState::Stopped => {
+                self.play_or_resume();
+            }
+        }
+    }
+
+    fn play_or_resume(&mut self) {
+        match self.player.state() {
+            PlayState::Playing => {}
+            PlayState::Paused => self.player.resume(),
+            PlayState::Stopped => {
+                if let Some(index) = self.playing_index.or_else(|| self.selected_track_index()) {
+                    self.play_index(index, false, BagUpdate::Reanchor);
+                }
+            }
+        }
+    }
+
+    pub fn apply_media_command(&mut self, command: MediaCommand) {
+        match command {
+            MediaCommand::Play => self.play_or_resume(),
+            MediaCommand::Toggle => self.toggle_or_start(),
+            MediaCommand::Pause => self.player.pause(),
+            MediaCommand::Next => self.play_next(false),
+            MediaCommand::Previous => self.play_previous(),
+            MediaCommand::SeekRelMicros(offset) => {
+                self.seek_rel_micros(offset);
+            }
+            MediaCommand::SeekTo { position, track_id } => {
+                self.seek_to_requested(position, track_id.as_deref());
+            }
+            MediaCommand::SetVolume(volume) => {
+                if volume > 0 {
+                    self.player.set_muted(false);
+                    self.config.muted = false;
+                }
+                self.player.set_volume(volume);
+                self.config.volume = volume;
+            }
+            MediaCommand::SetRepeat(repeat) => self.config.repeat = repeat,
+            MediaCommand::SetShuffle(shuffle) => {
+                if shuffle != self.config.shuffle {
+                    self.toggle_shuffle();
+                }
+            }
+            MediaCommand::Quit => self.should_quit = true,
+        }
+    }
+
+    fn seek_rel_micros(&mut self, offset: i64) {
+        if self.player.state() == PlayState::Stopped {
+            return;
+        }
+        let current = duration_as_micros(self.player.position());
+        let requested = current.saturating_add(offset);
+        if requested < 0 {
+            if self.player.seek_to(Duration::ZERO) {
+                self.push_seeked(Duration::ZERO);
+            }
+            return;
+        }
+        if let Some(duration) = self.effective_duration()
+            && requested > duration_as_micros(duration)
+        {
+            self.play_next(false);
+            return;
+        }
+        let target = Duration::from_micros(requested as u64);
+        if self.player.seek_to(target) {
+            self.push_seeked(self.player.position());
+        }
+    }
+
+    fn seek_to_requested(&mut self, position: Duration, track_id: Option<&str>) {
+        if self.player.state() == PlayState::Stopped {
+            return;
+        }
+        if let Some(expected) = track_id
+            && expected != self.current_track_id()
+        {
+            return;
+        }
+        if let Some(duration) = self.effective_duration()
+            && position > duration
+        {
+            return;
+        }
+        if self.player.seek_to(position) {
+            self.push_seeked(self.player.position());
+        }
+    }
+
+    fn effective_duration(&self) -> Option<Duration> {
+        self.player
+            .duration()
+            .or_else(|| self.current_track().and_then(|track| track.duration))
+    }
+
+    fn push_seeked(&mut self, position: Duration) {
+        self.media_events.push(MediaEvent::Seeked { position });
+    }
+
+    pub fn drain_media_events(&mut self) -> Vec<MediaEvent> {
+        std::mem::take(&mut self.media_events)
+    }
+
+    pub fn media_snapshot(&self) -> crate::media::MediaSnapshot {
+        let track = self.current_track();
+        crate::media::MediaSnapshot {
+            status: self.player.state(),
+            title: track
+                .map(|track| track.display_title().to_owned())
+                .unwrap_or_default(),
+            artist: track.and_then(|track| track.artist.clone()),
+            album: track.and_then(|track| track.album.clone()),
+            path: track.map(|track| track.path.clone()),
+            duration: self.effective_duration(),
+            position: self.player.position(),
+            volume: self.player.volume(),
+            muted: self.player.is_muted(),
+            repeat: self.config.repeat,
+            shuffle: self.config.shuffle,
+            can_go_previous: !self.history.is_empty(),
+            can_go_next: self.can_go_next(),
+            track_id: self.current_track_id(),
+        }
+    }
+
+    fn current_track_id(&self) -> String {
+        match self.playing_index {
+            Some(index) => format!("/org/mpris/MediaPlayer2/Track/{index}"),
+            None => "/org/mpris/MediaPlayer2/TrackList/NoTrack".to_owned(),
+        }
+    }
+
+    fn can_go_next(&self) -> bool {
+        if !self.queue.is_empty() {
+            return true;
+        }
+        if self.tracks.is_empty() {
+            return false;
+        }
+        if self.config.repeat != RepeatMode::None {
+            return true;
+        }
+        if self.config.shuffle {
+            if self.shuffle_order.is_empty() {
+                return true;
+            }
+            return self.shuffle_cursor < self.shuffle_order.len();
+        }
+        match self.playing_index {
+            Some(index) => index + 1 < self.tracks.len(),
+            None => !self.tracks.is_empty(),
+        }
+    }
+
+    pub fn playback_mode(&self) -> PlaybackMode {
+        PlaybackMode {
+            repeat: self.config.repeat,
+            shuffle: self.config.shuffle,
+        }
     }
 
     fn toggle_visualizer(&mut self) {
@@ -627,7 +895,7 @@ impl App {
             return;
         };
         self.queue = paths.collect();
-        if self.play_path(&first, true) {
+        if self.play_path(&first, true, BagUpdate::Reanchor) {
             self.overlay = Overlay::None;
         } else {
             self.play_next(false);
@@ -704,6 +972,10 @@ impl App {
     }
 }
 
+fn duration_as_micros(duration: Duration) -> i64 {
+    i64::try_from(duration.as_micros()).unwrap_or(i64::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};
@@ -760,11 +1032,12 @@ mod tests {
             .collect();
         app.playing_index = Some(2);
 
-        app.config.play_mode = PlayMode::Sequential;
+        app.config.repeat = RepeatMode::None;
+        app.config.shuffle = false;
         assert_eq!(app.next_library_index(true), None);
-        app.config.play_mode = PlayMode::RepeatAll;
+        app.config.repeat = RepeatMode::All;
         assert_eq!(app.next_library_index(true), Some(0));
-        app.config.play_mode = PlayMode::RepeatOne;
+        app.config.repeat = RepeatMode::One;
         assert_eq!(app.next_library_index(true), Some(2));
         assert_eq!(app.next_library_index(false), Some(0));
     }
@@ -919,7 +1192,7 @@ mod tests {
     #[test]
     fn shuffle_does_not_immediately_repeat_current_track() {
         let config = AppConfig {
-            play_mode: PlayMode::Shuffle,
+            shuffle: true,
             ..AppConfig::default()
         };
         let (_temp, mut app) = test_app(config);
@@ -927,9 +1200,76 @@ mod tests {
             .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
             .collect();
         app.playing_index = Some(2);
-        for _ in 0..20 {
+        app.reanchor_shuffle_bag(2);
+        for _ in 0..3 {
             assert_ne!(app.next_library_index(true), Some(2));
         }
+    }
+
+    #[test]
+    fn z_cycles_repeat_only_and_s_toggles_shuffle() {
+        let (_temp, mut app) = test_app(AppConfig::default());
+        assert_eq!(app.config.repeat, RepeatMode::None);
+        assert!(!app.config.shuffle);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE));
+        assert_eq!(app.config.repeat, RepeatMode::All);
+        assert!(!app.config.shuffle);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+        assert_eq!(app.config.repeat, RepeatMode::All);
+        assert!(app.config.shuffle);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+        assert!(!app.config.shuffle);
+        assert_eq!(app.config.repeat, RepeatMode::All);
+    }
+
+    #[test]
+    fn shuffle_bag_exhausts_then_stops_without_repeat() {
+        let config = AppConfig {
+            shuffle: true,
+            repeat: RepeatMode::None,
+            ..AppConfig::default()
+        };
+        let (_temp, mut app) = test_app(config);
+        app.tracks = (0..3)
+            .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
+            .collect();
+        app.playing_index = Some(0);
+        app.reanchor_shuffle_bag(0);
+        let mut seen = vec![0];
+        while let Some(next) = app.next_library_index(true) {
+            seen.push(next);
+        }
+        assert_eq!(seen.len(), 3);
+        let mut unique = seen.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique, vec![0, 1, 2]);
+        assert_eq!(app.next_library_index(true), None);
+    }
+
+    #[test]
+    fn shuffle_repeat_all_reshuffles_after_bag() {
+        let config = AppConfig {
+            shuffle: true,
+            repeat: RepeatMode::All,
+            ..AppConfig::default()
+        };
+        let (_temp, mut app) = test_app(config);
+        app.tracks = (0..3)
+            .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
+            .collect();
+        app.playing_index = Some(0);
+        app.reanchor_shuffle_bag(0);
+        for _ in 0..2 {
+            assert!(app.next_library_index(true).is_some());
+        }
+        let first_of_next_round = app.next_library_index(true);
+        assert!(first_of_next_round.is_some());
+        assert_eq!(app.shuffle_cursor, 1);
+        assert_eq!(app.shuffle_order.len(), 3);
     }
 
     #[test]

@@ -13,6 +13,7 @@ use ratatui::prelude::*;
 use music_player::app::App;
 use music_player::cli::{Cli, validate_directory};
 use music_player::config::{AppConfig, AppPaths};
+use music_player::media::{MediaEvent, MediaSession};
 use music_player::ui;
 
 fn main() -> ExitCode {
@@ -59,8 +60,18 @@ fn run_application() -> Result<(), String> {
     // 播放器、播放列表目录及工作线程都在切换终端模式前初始化。
     // 这样启动失败时错误仍是普通、可复制的终端文本。
     let mut app = App::new(library_dir, paths, config, warning, save_config_on_exit)?;
+    let session = match MediaSession::start() {
+        Ok(session) => Some(session),
+        Err(error) => {
+            if app.message.is_none() {
+                app.message = Some(error);
+            }
+            None
+        }
+    };
     let mut terminal = setup_terminal().map_err(|error| format!("无法初始化终端: {error}"))?;
-    let run_result = run(&mut terminal, &mut app).map_err(|error| format!("终端运行失败: {error}"));
+    let run_result = run(&mut terminal, &mut app, session.as_ref())
+        .map_err(|error| format!("终端运行失败: {error}"));
     let restore_result =
         restore_terminal(&mut terminal).map_err(|error| format!("无法恢复终端状态: {error}"));
     let save_result = app.save_settings();
@@ -71,7 +82,11 @@ fn run_application() -> Result<(), String> {
     Ok(())
 }
 
-fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> io::Result<()> {
+fn run(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+    session: Option<&MediaSession>,
+) -> io::Result<()> {
     while !app.should_quit {
         terminal.draw(|frame| ui::draw(frame, app))?;
         // 频谱开启时把主循环提到约 50Hz，与 spectrum 源 20ms interval 对齐；
@@ -87,7 +102,19 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
         {
             app.handle_key(key);
         }
+        if let Some(session) = session {
+            for command in session.try_recv() {
+                app.apply_media_command(command);
+            }
+        }
         app.on_tick();
+        if let Some(session) = session {
+            session.publish(app.media_snapshot());
+            for event in app.drain_media_events() {
+                let MediaEvent::Seeked { position } = event;
+                session.notify_seeked(position);
+            }
+        }
     }
     Ok(())
 }

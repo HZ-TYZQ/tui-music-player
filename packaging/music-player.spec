@@ -1,5 +1,5 @@
 Name:           music-player
-Version:        1.1.0
+Version:        1.2.0
 Release:        1%{?dist}
 Summary:        Terminal music library player
 
@@ -20,7 +20,7 @@ ExclusiveArch:  x86_64
 Music Player provides a responsive terminal interface for a local music
 library. It uses Rodio for playback, Lofty for metadata, SQLite for an
 incremental index that can be rebuilt, and XDG directories for settings
-and playlists.
+and playlists. On Linux it exposes MPRIS 2 for desktop media controls.
 
 %prep
 %autosetup -n %{name}-%{version}
@@ -56,6 +56,11 @@ install -Dpm 0644 assets/icons/%{name}-48.png %{buildroot}%{_datadir}/icons/hico
 %{_datadir}/icons/hicolor/48x48/apps/%{name}.png
 
 %changelog
+* Tue Aug 18 2026 HZ-TYZQ - 1.2.0-1
+- Add Linux MPRIS and Windows SMTC media session integration
+- Split playback mode into repeat and shuffle; reshuffle each random round
+- Keep pause position; keep paused state when changing tracks
+
 * Mon Aug 17 2026 HZ-TYZQ - 1.1.0-1
 - Replace GStreamer playback and Discoverer with Rodio and Lofty
 - Rebuild the spectrum from a PCM tap and rustfft
