@@ -1,5 +1,5 @@
 Name:           music-player
-Version:        1.2.0
+Version:        1.2.1
 Release:        1%{?dist}
 Summary:        Terminal music library player
 
@@ -56,6 +56,11 @@ install -Dpm 0644 assets/icons/%{name}-48.png %{buildroot}%{_datadir}/icons/hico
 %{_datadir}/icons/hicolor/48x48/apps/%{name}.png
 
 %changelog
+* Thu Aug 20 2026 HZ-TYZQ - 1.2.1-1
+- Skip broken tracks correctly and keep playback history clean
+- Encode MPRIS file URLs and clear stale Windows SMTC metadata
+- Split application and UI code into focused modules
+
 * Tue Aug 18 2026 HZ-TYZQ - 1.2.0-1
 - Add Linux MPRIS and Windows SMTC media session integration
 - Split playback mode into repeat and shuffle; reshuffle each random round

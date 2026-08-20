@@ -7,11 +7,31 @@ use mpris_server::{
     LoopStatus, Metadata, PlaybackStatus, PlayerInterface, Property, RootInterface, Server, Signal,
     Time, TrackId, Volume,
 };
+use percent_encoding::{AsciiSet, CONTROLS, percent_encode};
 
 use crate::player::PlayState;
 use crate::track::RepeatMode;
 
 use super::{MediaCommand, MediaSnapshot};
+
+// RFC 3986 path 中不允许的 ASCII 字符；非 ASCII 字节会由
+// percent-encoding 自动转义。保留 `/` 才能继续表示路径层级。
+const FILE_URI_ENCODE_SET: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'%')
+    .add(b'<')
+    .add(b'>')
+    .add(b'?')
+    .add(b'[')
+    .add(b'\\')
+    .add(b']')
+    .add(b'^')
+    .add(b'`')
+    .add(b'{')
+    .add(b'|')
+    .add(b'}');
 
 #[derive(Clone)]
 struct Bridge {
@@ -311,9 +331,18 @@ fn metadata(snapshot: &MediaSnapshot) -> Metadata {
         builder = builder.length(Time::from_micros(duration_micros(duration)));
     }
     if let Some(path) = &snapshot.path {
-        builder = builder.url(format!("file://{}", path.display()));
+        builder = builder.url(file_uri(path));
     }
     builder.build()
+}
+
+fn file_uri(path: &std::path::Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+
+    format!(
+        "file://{}",
+        percent_encode(path.as_os_str().as_bytes(), FILE_URI_ENCODE_SET)
+    )
 }
 
 fn reported_volume(snapshot: &MediaSnapshot) -> Volume {
@@ -361,5 +390,29 @@ fn changed_properties(last: &MediaSnapshot, current: &MediaSnapshot) -> Option<V
         None
     } else {
         Some(changes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    #[test]
+    fn file_uri_percent_encodes_unicode_spaces_and_reserved_characters() {
+        assert_eq!(
+            file_uri(Path::new("/home/测试 用户/Music/a#b?.flac")),
+            "file:///home/%E6%B5%8B%E8%AF%95%20%E7%94%A8%E6%88%B7/Music/a%23b%3F.flac"
+        );
+    }
+
+    #[test]
+    fn file_uri_preserves_non_utf8_unix_paths() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let path = Path::new(OsStr::from_bytes(b"/music/non-utf8-\xFF.flac"));
+        assert_eq!(file_uri(path), "file:///music/non-utf8-%FF.flac");
     }
 }

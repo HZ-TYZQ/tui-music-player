@@ -200,15 +200,22 @@ fn publish_metadata(
 ) -> windows::core::Result<()> {
     let updater = controls.DisplayUpdater()?;
     let properties = updater.MusicProperties()?;
-    properties.SetTitle(&HSTRING::from(snapshot.title.as_str()))?;
-    if let Some(artist) = &snapshot.artist {
-        properties.SetArtist(&HSTRING::from(artist.as_str()))?;
-    }
-    if let Some(album) = &snapshot.album {
-        properties.SetAlbumTitle(&HSTRING::from(album.as_str()))?;
-    }
+    let (title, artist, album) = metadata_text(snapshot);
+    properties.SetTitle(&HSTRING::from(title))?;
+    // SMTC 会保留 DisplayUpdater 上一次的值，因此缺失字段也要
+    // 显式写入空字符串，避免无标签曲目显示上一首的歌手或专辑。
+    properties.SetArtist(&HSTRING::from(artist))?;
+    properties.SetAlbumTitle(&HSTRING::from(album))?;
     updater.Update()?;
     Ok(())
+}
+
+fn metadata_text(snapshot: &MediaSnapshot) -> (&str, &str, &str) {
+    (
+        snapshot.title.as_str(),
+        snapshot.artist.as_deref().unwrap_or_default(),
+        snapshot.album.as_deref().unwrap_or_default(),
+    )
 }
 
 fn publish_status(
@@ -345,5 +352,22 @@ unsafe fn pump_messages() {
         unsafe {
             DispatchMessageW(&message);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_metadata_fields_are_published_as_empty_text() {
+        let snapshot = MediaSnapshot {
+            title: "Track".to_owned(),
+            artist: None,
+            album: None,
+            ..MediaSnapshot::empty()
+        };
+
+        assert_eq!(metadata_text(&snapshot), ("Track", "", ""));
     }
 }
