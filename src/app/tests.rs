@@ -96,7 +96,8 @@ fn sequential_next_skips_a_broken_track_without_polluting_history() {
     app.play_next(false);
 
     assert_eq!(app.playing_index, Some(2));
-    assert_eq!(app.player.current_path(), Some(third.as_path()));
+    let current_path = app.player.current_path().unwrap().canonicalize().unwrap();
+    assert_eq!(current_path, third.canonicalize().unwrap());
     assert_eq!(app.history, vec![first]);
 }
 
