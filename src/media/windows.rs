@@ -37,11 +37,12 @@ pub fn run(
     ready: Sender<Result<(), String>>,
 ) {
     let mut runtime_ready = false;
-    let result = (|| -> Result<(HWND, SystemMediaTransportControls), String> {
+    let mut hwnd = HWND(std::ptr::null_mut());
+    let result = (|| -> Result<SystemMediaTransportControls, String> {
         unsafe { RoInitialize(RO_INIT_SINGLETHREADED) }
             .map_err(|error| format!("无法初始化 Windows Runtime: {error}"))?;
         runtime_ready = true;
-        let hwnd = unsafe { create_hidden_window() }?;
+        hwnd = unsafe { create_hidden_window() }?;
         let interop = windows::core::factory::<
             SystemMediaTransportControls,
             ISystemMediaTransportControlsInterop,
@@ -51,22 +52,17 @@ pub fn run(
             .map_err(|error| format!("无法绑定 SMTC: {error}"))?;
         setup_controls(&controls, commands.clone())
             .map_err(|error| format!("无法配置 SMTC: {error}"))?;
-        Ok((hwnd, controls))
+        Ok(controls)
     })();
 
-    let (hwnd, controls) = match result {
-        Ok(pair) => {
+    let controls = match result {
+        Ok(controls) => {
             let _ = ready.send(Ok(()));
-            pair
+            controls
         }
         Err(error) => {
             let _ = ready.send(Err(error));
-            if runtime_ready {
-                unsafe {
-                    RoUninitialize();
-                }
-            }
-            let _ = shutdown.recv();
+            teardown_runtime(hwnd, runtime_ready);
             return;
         }
     };
@@ -111,9 +107,19 @@ pub fn run(
     }
 
     let _ = controls.SetIsEnabled(false);
+    drop(controls);
+    teardown_runtime(hwnd, true);
+}
+
+fn teardown_runtime(hwnd: HWND, runtime_ready: bool) {
     unsafe {
-        let _ = DestroyWindow(hwnd);
-        RoUninitialize();
+        if !hwnd.0.is_null() {
+            let _ = DestroyWindow(hwnd);
+            pump_messages();
+        }
+        if runtime_ready {
+            RoUninitialize();
+        }
     }
 }
 

@@ -118,14 +118,12 @@ impl MediaSession {
                 shutdown,
                 thread: Some(thread),
             }),
-            Ok(Err(error)) => {
-                let _ = thread.join();
-                Err(error)
-            }
-            Err(_) => {
-                let _ = thread.join();
-                Err("媒体会话线程在注册完成前退出".to_owned())
-            }
+            Ok(Err(error)) => Err(abandon_failed_worker(shutdown, thread, error)),
+            Err(_) => Err(abandon_failed_worker(
+                shutdown,
+                thread,
+                "媒体会话线程在注册完成前退出".to_owned(),
+            )),
         }
     }
 
@@ -157,6 +155,14 @@ impl Drop for MediaSession {
     }
 }
 
+/// 注册失败后必须先丢掉 shutdown sender 再 `join`。
+/// 否则 worker 若在 `ready=Err` 之后仍 `recv` shutdown，双方会永久等待。
+fn abandon_failed_worker(shutdown: Sender<()>, thread: JoinHandle<()>, error: String) -> String {
+    drop(shutdown);
+    let _ = thread.join();
+    error
+}
+
 #[cfg(target_os = "linux")]
 #[path = "linux.rs"]
 mod platform;
@@ -181,5 +187,34 @@ mod platform {
     ) {
         let _ = ready.send(Err("当前平台不支持系统媒体会话".to_owned()));
         let _ = shutdown.recv();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::abandon_failed_worker;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn failed_session_handshake_does_not_deadlock_when_worker_waits_for_shutdown() {
+        let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
+        let (shutdown, shutdown_rx) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let _ = ready_tx.send(Err("注册失败".to_owned()));
+            let _ = shutdown_rx.recv();
+        });
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let error = match ready_rx.recv() {
+                Ok(Err(error)) => abandon_failed_worker(shutdown, thread, error),
+                other => panic!("unexpected handshake: {other:?}"),
+            };
+            let _ = done_tx.send(error);
+        });
+        let error = done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("注册失败握手发生死锁");
+        assert_eq!(error, "注册失败");
     }
 }
