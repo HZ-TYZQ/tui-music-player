@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### 资源
+
+- 应用图标重做为简约单色版：石墨底板加五柱频谱，配色与 `src/theme.rs` 的 `spectrum_low` / `spectrum_high` 一致
+- 新增 16 px 专用的三柱简化图标，只用于 ICO 的最小一档
+- 同步重新生成 48 px PNG 和 Windows ICO，并更新 `assets/brand-spec.md`
+
 ### 修复
 
 - Windows 媒体会话注册失败时不再与启动线程互相等待

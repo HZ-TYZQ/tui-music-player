@@ -128,6 +128,11 @@ Windows MSVC 构建、测试和打包由 GitHub Actions 的 Windows runner 完�
 
 Installer 的“添加到当前用户 PATH”选项默认不勾选。启用后可以在新打开的终端中直接运行 `music-player`，卸载时只移除应用自己的 PATH 条目。
 
+## 贡献者
+
+- HZ-TYZQ — 作者与维护者
+- Codex — 早期版本的应用图标设计
+
 ## 许可证
 
 版权属名：HZ-TYZQ。项目采用 MIT 许可证，详见 `LICENSE`。
