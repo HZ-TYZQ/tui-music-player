@@ -1,5 +1,5 @@
 Name:           music-player
-Version:        1.2.1
+Version:        1.2.2
 Release:        1%{?dist}
 Summary:        Terminal music library player
 
@@ -56,6 +56,11 @@ install -Dpm 0644 assets/icons/%{name}-48.png %{buildroot}%{_datadir}/icons/hico
 %{_datadir}/icons/hicolor/48x48/apps/%{name}.png
 
 %changelog
+* Mon Aug 31 2026 HZ-TYZQ - 1.2.2-1
+- Redesign the application icon as a restrained monochrome spectrum
+- Add a dedicated small-size icon and regenerate PNG and Windows ICO assets
+- Avoid Windows media-session startup and shutdown deadlocks
+
 * Thu Aug 20 2026 HZ-TYZQ - 1.2.1-1
 - Skip broken tracks correctly and keep playback history clean
 - Encode MPRIS file URLs and clear stale Windows SMTC metadata

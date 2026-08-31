@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-08-31
+
 ### 资源
 
 - 应用图标重做为简约单色版：石墨底板加五柱频谱，配色与 `src/theme.rs` 的 `spectrum_low` / `spectrum_high` 一致
