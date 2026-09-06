@@ -1,5 +1,5 @@
 Name:           music-player
-Version:        1.2.2
+Version:        1.3.0
 Release:        1%{?dist}
 Summary:        Terminal music library player
 
@@ -56,6 +56,13 @@ install -Dpm 0644 assets/icons/%{name}-48.png %{buildroot}%{_datadir}/icons/hico
 %{_datadir}/icons/hicolor/48x48/apps/%{name}.png
 
 %changelog
+* Sun Sep 07 2026 HZ-TYZQ - 1.3.0-1
+- Add a play queue panel with jump-to, remove, reorder and clear
+- Sort the library by path, title, artist, album or duration in either direction
+- Read track and disc numbers so album order follows the album itself
+- Add mouse support for lists, the wheel and the progress bar
+- Keep the reason a track was skipped instead of clearing it on the next track
+
 * Mon Aug 31 2026 HZ-TYZQ - 1.2.2-1
 - Redesign the application icon as a restrained monochrome spectrum
 - Add a dedicated small-size icon and regenerate PNG and Windows ICO assets
