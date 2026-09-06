@@ -4,6 +4,7 @@ mod input;
 mod media;
 mod playback;
 mod playlists;
+mod queue;
 
 #[cfg(test)]
 mod tests;
@@ -27,6 +28,7 @@ pub enum Overlay {
     Help,
     Playlists,
     PlaylistTracks,
+    Queue,
     NameInput,
     DeleteConfirm,
 }
@@ -56,6 +58,7 @@ pub struct App {
     pub overlay: Overlay,
     pub playlist_selected: usize,
     pub playlist_track_selected: usize,
+    pub queue_selected: usize,
     pub name_input: String,
     pub playlists: PlaylistStore,
     pub config: AppConfig,
@@ -139,6 +142,7 @@ impl App {
             overlay: Overlay::None,
             playlist_selected: 0,
             playlist_track_selected: 0,
+            queue_selected: 0,
             name_input: String::new(),
             playlists,
             config,

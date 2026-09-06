@@ -41,6 +41,7 @@ impl App {
             KeyCode::Char('a') => self.enqueue_selected(false),
             KeyCode::Char('A') => self.enqueue_selected(true),
             KeyCode::Char('P') => self.overlay = Overlay::Playlists,
+            KeyCode::Char('Q') => self.overlay = Overlay::Queue,
             KeyCode::Char('?') => self.overlay = Overlay::Help,
             KeyCode::Esc => self.message = None,
             _ => {}
@@ -120,5 +121,6 @@ impl App {
         self.playlist_selected = self
             .playlist_selected
             .min(self.playlists.all().len().saturating_sub(1));
+        self.queue_selected = self.queue_selected.min(self.queue.len().saturating_sub(1));
     }
 }

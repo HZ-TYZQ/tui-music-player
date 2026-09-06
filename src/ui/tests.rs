@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -13,6 +14,7 @@ use super::library::{
     MIN_ARTIST_WIDTH, MIN_TITLE_WIDTH, PAUSE_ACTION_ICON, PLAY_ACTION_ICON, STOPPED_ICON,
     playback_action_indicator, track_row_columns, track_row_layout,
 };
+use super::overlays::resolve_queue_rows;
 use super::text::{ascii_progress_bar, fmt_duration, now_playing_text, truncate_display};
 use super::visualizer::{frequency_color, resample_spectrum, spectrum_block, visualizer_height};
 
@@ -206,4 +208,35 @@ fn spectrum_gradient_uses_theme_endpoints() {
         frequency_color(31, 32, &DEFAULT_THEME),
         Color::Rgb(242, 242, 242)
     );
+}
+
+#[test]
+fn queue_rows_resolve_duplicates_and_report_paths_missing_from_the_library() {
+    let present = PathBuf::from("/music/a.wav");
+    let absent = PathBuf::from("/music/gone.wav");
+    let tracks = vec![
+        queue_test_track(PathBuf::from("/music/other.wav")),
+        queue_test_track(present.clone()),
+    ];
+    let queue = VecDeque::from(vec![present.clone(), absent, present]);
+
+    assert_eq!(
+        resolve_queue_rows(&tracks, &queue),
+        vec![Some(1), None, Some(1)]
+    );
+    assert!(resolve_queue_rows(&tracks, &VecDeque::new()).is_empty());
+}
+
+fn queue_test_track(path: PathBuf) -> Track {
+    Track {
+        relative_path: path.file_name().unwrap().into(),
+        path,
+        title: "Song".to_owned(),
+        artist: None,
+        album: None,
+        duration: Some(Duration::from_secs(1)),
+        format: Some("WAV".to_owned()),
+        file_size: 1,
+        modified_ns: 1,
+    }
 }

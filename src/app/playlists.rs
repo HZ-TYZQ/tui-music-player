@@ -69,6 +69,10 @@ impl App {
                 }
                 true
             }
+            Overlay::Queue => {
+                self.handle_queue_key(code);
+                true
+            }
             Overlay::NameInput => {
                 match code {
                     KeyCode::Esc => self.overlay = Overlay::Playlists,

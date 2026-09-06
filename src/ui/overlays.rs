@@ -1,10 +1,17 @@
-//! 帮助、播放列表和确认弹层。
+//! 帮助、播放列表、播放队列和确认弹层。
+
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::{Path, PathBuf};
 
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Overlay};
 use crate::theme::Theme;
+use crate::track::Track;
+
+use super::text::{fmt_duration, now_playing_text, truncate_display};
 
 pub(super) fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme) {
     match app.overlay {
@@ -26,6 +33,7 @@ pub(super) fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme) {
                 "/              实时模糊搜索",
                 "r              后台重新扫描",
                 "a / A          加到队尾 / 设为下一首",
+                "Q              播放队列",
                 "P              播放列表",
                 "? / Esc        关闭帮助",
                 "q              退出",
@@ -35,6 +43,7 @@ pub(super) fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme) {
             theme,
         ),
         Overlay::Playlists => draw_playlists(frame, app, theme),
+        Overlay::Queue => draw_queue(frame, app, theme),
         Overlay::PlaylistTracks => draw_playlist_tracks(frame, app, theme),
         Overlay::NameInput => draw_text_popup(
             frame,
@@ -161,6 +170,134 @@ fn draw_playlist_tracks(frame: &mut Frame, app: &App, theme: &Theme) {
     );
     frame.render_widget(
         Paragraph::new("Enter 从此处播放 · d 从列表移除 · Esc 返回")
+            .style(Style::new().fg(theme.muted)),
+        help,
+    );
+}
+
+const MISSING_LABEL: &str = " 不在曲库中";
+
+/// 把队列路径一次性解析成曲库下标。整体是 O(曲库 + 队列)，
+/// 避免逐条线性查找在大曲库加长队列时退化成平方级扫描。
+pub(super) fn resolve_queue_rows(
+    tracks: &[Track],
+    queue: &VecDeque<PathBuf>,
+) -> Vec<Option<usize>> {
+    let wanted: HashSet<&Path> = queue.iter().map(PathBuf::as_path).collect();
+    let mut found: HashMap<&Path, usize> = HashMap::with_capacity(wanted.len());
+    for (index, track) in tracks.iter().enumerate() {
+        if wanted.contains(track.path.as_path()) {
+            found.entry(track.path.as_path()).or_insert(index);
+        }
+    }
+    queue
+        .iter()
+        .map(|path| found.get(path.as_path()).copied())
+        .collect()
+}
+
+fn draw_queue(frame: &mut Frame, app: &App, theme: &Theme) {
+    let area = centered(frame.area(), 74, 70);
+    frame.render_widget(Clear, area);
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .title(Span::styled(
+            format!(" 播放队列 · {} 首 ", app.queue.len()),
+            Style::new().fg(theme.primary).bold(),
+        ))
+        .border_style(Style::new().fg(theme.border));
+
+    if app.queue.is_empty() {
+        frame.render_widget(
+            Paragraph::new("  队列是空的\n  在曲库中按 a 加到队尾，按 A 设为下一首")
+                .style(Style::new().fg(theme.muted))
+                .block(block),
+            area,
+        );
+        return;
+    }
+
+    let rows = resolve_queue_rows(&app.tracks, &app.queue);
+    let order_width = format!("{}. ", app.queue.len()).len();
+    let duration_width = rows
+        .iter()
+        .filter_map(|row| app.tracks.get((*row)?)?.duration)
+        .map(|duration| fmt_duration(duration).len())
+        .max()
+        .unwrap_or(5)
+        .max(5);
+    // 去掉左右边框和 highlight_symbol 后，中间留一列间隔给时长。
+    let text_width = usize::from(area.width)
+        .saturating_sub(2 + 2 + order_width + duration_width + 1)
+        .max(1);
+
+    let items = app
+        .queue
+        .iter()
+        .zip(&rows)
+        .enumerate()
+        .map(|(order, (path, row))| {
+            let order = format!("{:>width$}. ", order + 1, width = order_width - 2);
+            let Some(track) = row.and_then(|index| app.tracks.get(index)) else {
+                let name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("?");
+                // 播放时这些条目会被跳过，因此名字要给提示语让出显示宽度。
+                let name_width = text_width
+                    .saturating_sub(UnicodeWidthStr::width(MISSING_LABEL))
+                    .max(1);
+                return ListItem::new(Line::from(vec![
+                    Span::styled(order, Style::new().fg(theme.muted)),
+                    Span::styled(
+                        truncate_display(name, name_width),
+                        Style::new().fg(theme.danger),
+                    ),
+                    Span::styled(MISSING_LABEL, Style::new().fg(theme.muted)),
+                ]));
+            };
+            let (title, artist) =
+                now_playing_text(track.display_title(), track.artist.as_deref(), text_width);
+            let duration = track
+                .duration
+                .map(fmt_duration)
+                .unwrap_or_else(|| "--:--".to_owned());
+            let text_used =
+                UnicodeWidthStr::width(title.as_str()) + UnicodeWidthStr::width(artist.as_str());
+            let padding = " ".repeat(
+                text_width.saturating_sub(text_used)
+                    + duration_width.saturating_sub(duration.len())
+                    + 1,
+            );
+            ListItem::new(Line::from(vec![
+                Span::styled(order, Style::new().fg(theme.muted)),
+                Span::styled(title, Style::new().fg(theme.primary)),
+                Span::styled(artist, Style::new().fg(theme.muted)),
+                Span::styled(padding, Style::new().fg(theme.muted)),
+                Span::styled(duration, Style::new().fg(theme.muted)),
+            ]))
+        });
+
+    // 列表只用底部提示行以上的空间，长队列不会有条目被提示行盖住。
+    let inner = block.inner(area);
+    let viewport = Rect {
+        height: inner.height.saturating_sub(1),
+        ..inner
+    };
+    frame.render_widget(block, area);
+    let list = List::new(items)
+        .highlight_symbol(Span::styled("▸ ", Style::new().fg(theme.primary)))
+        .highlight_style(Style::new().bg(theme.selection_bg).bold());
+    let mut state = ListState::default().with_selected(Some(app.queue_selected));
+    frame.render_stateful_widget(list, viewport, &mut state);
+    let help = Rect::new(
+        inner.x + 1,
+        inner.bottom().saturating_sub(1),
+        inner.width.saturating_sub(1),
+        1,
+    );
+    frame.render_widget(
+        Paragraph::new("Enter 跳到此处播放 · d 移除 · J/K 上下移动 · c 清空 · Esc 关闭")
             .style(Style::new().fg(theme.muted)),
         help,
     );

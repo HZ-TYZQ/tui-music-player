@@ -356,6 +356,173 @@ fn duration_column_width_follows_the_longest_track_duration() {
     assert_eq!(app.duration_column_width, 5);
 }
 
+#[test]
+fn queue_panel_edits_reorder_remove_and_clear_the_queue() {
+    let (_temp, mut app) = test_app(AppConfig::default());
+    let paths: Vec<PathBuf> = (0..3)
+        .map(|index| PathBuf::from(format!("/music/{index}.wav")))
+        .collect();
+    app.queue = paths.iter().cloned().collect();
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::NONE));
+    assert_eq!(app.overlay, Overlay::Queue);
+
+    // J 把首项下移一位，选择跟着它走。
+    app.handle_key(KeyEvent::new(KeyCode::Char('J'), KeyModifiers::NONE));
+    assert_eq!(app.queue_selected, 1);
+    assert_eq!(app.queue[0], paths[1]);
+    assert_eq!(app.queue[1], paths[0]);
+
+    // K 移回原位。
+    app.handle_key(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::NONE));
+    assert_eq!(app.queue_selected, 0);
+    assert_eq!(app.queue[0], paths[0]);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
+    assert_eq!(app.queue.len(), 2);
+    assert_eq!(app.queue[1], paths[2]);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+    assert!(app.queue.is_empty());
+    assert_eq!(app.queue_selected, 0);
+
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(app.overlay, Overlay::None);
+}
+
+#[test]
+fn queue_selection_stays_in_range_when_the_last_entry_is_removed() {
+    let (_temp, mut app) = test_app(AppConfig::default());
+    app.queue = (0..2)
+        .map(|index| PathBuf::from(format!("/music/{index}.wav")))
+        .collect();
+    app.overlay = Overlay::Queue;
+    app.queue_selected = 1;
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
+
+    assert_eq!(app.queue.len(), 1);
+    assert_eq!(app.queue_selected, 0);
+}
+
+#[test]
+fn playing_a_queue_entry_drops_the_entries_before_it() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let music = temp.path().join("music");
+    let skipped = music.join("a.wav");
+    let wanted = music.join("b.wav");
+    let rest = music.join("c.wav");
+    write_test_wav(&skipped);
+    write_test_wav(&wanted);
+    write_test_wav(&rest);
+    app.tracks = vec![
+        track(skipped.clone()),
+        track(wanted.clone()),
+        track(rest.clone()),
+    ];
+    app.search.replace_tracks(&app.tracks);
+    app.queue = vec![skipped, wanted.clone(), rest.clone()].into();
+    app.overlay = Overlay::Queue;
+    app.queue_selected = 1;
+
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert_eq!(app.overlay, Overlay::None);
+    assert_eq!(app.playing_index, Some(1));
+    let current_path = app.player.current_path().unwrap().canonicalize().unwrap();
+    assert_eq!(current_path, wanted.canonicalize().unwrap());
+    assert_eq!(app.queue.len(), 1);
+    assert_eq!(app.queue.front(), Some(&rest));
+}
+
+#[test]
+fn queue_keys_do_not_leak_to_the_library_while_the_panel_is_open() {
+    let (_temp, mut app) = test_app(AppConfig::default());
+    app.tracks = vec![track(PathBuf::from("/music/a.wav"))];
+    app.search.replace_tracks(&app.tracks);
+    app.overlay = Overlay::Queue;
+
+    // c 在曲库里没有绑定，但 q 会退出程序、s 会切随机，都必须被弹层吃掉。
+    app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+
+    assert!(!app.should_quit);
+    assert!(!app.config.shuffle);
+    assert_eq!(app.overlay, Overlay::Queue);
+}
+
+#[test]
+fn queue_panel_right_aligns_durations_and_keeps_every_entry_visible() {
+    let (_temp, mut app) = test_app(AppConfig::default());
+    let mut tracks: Vec<Track> = (0..12)
+        .map(|index| {
+            let mut item = track(PathBuf::from(format!("/music/{index:02}.wav")));
+            item.title = format!("第{index}首很长很长很长很长很长很长的中文歌名 Extra Long Tail");
+            item.artist = Some("某位歌手名字也不短".to_owned());
+            item.duration = Some(Duration::from_secs(61 * (index as u64 + 1)));
+            item
+        })
+        .collect();
+    // 覆盖三种排版分支：缺歌手、标题短到留白多、路径已不在曲库中。
+    tracks[3].artist = None;
+    tracks[4].title = "Short".to_owned();
+    app.tracks = tracks;
+    let missing = PathBuf::from("/gone/不在库里的一首歌.flac");
+    app.queue = app
+        .tracks
+        .iter()
+        .map(|track| track.path.clone())
+        .chain(std::iter::once(missing))
+        .collect();
+    app.overlay = Overlay::Queue;
+
+    let backend = ratatui::backend::TestBackend::new(100, 22);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    terminal.draw(|frame| crate::ui::draw(frame, &app)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let rendered: Vec<String> = (0..22)
+        .map(|row| {
+            (0..100)
+                .map(|column| buffer[(column, row)].symbol())
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .collect();
+
+    // 每首曲目的时长都必须落在同一列右端，长中文标题也不例外。
+    // 按缓冲区列测量：字节偏移会被中文字符的多字节编码带偏。
+    let duration_ends: Vec<u16> = rendered
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.contains("Extra Long Tail") || line.contains("5. Short"))
+        .map(|(row, _)| {
+            (0..100)
+                .rev()
+                .find(|column| {
+                    let symbol = buffer[(*column, row as u16)].symbol();
+                    symbol.len() == 1
+                        && symbol.starts_with(|character: char| character.is_ascii_digit())
+                })
+                .expect("时长列缺失")
+        })
+        .collect();
+    assert_eq!(duration_ends.len(), 12);
+    assert!(duration_ends.windows(2).all(|pair| pair[0] == pair[1]));
+
+    // 最后一条和底部提示行必须同时可见，提示行不能盖住任何条目。
+    // TestBackend 把宽字符的第二格填成空格，所以只能用 ASCII 片段定位这两行。
+    let last_entry = rendered
+        .iter()
+        .position(|line| line.contains(".flac"))
+        .expect("队列末项被遮挡");
+    let help = rendered
+        .iter()
+        .position(|line| line.contains("J/K"))
+        .expect("提示行缺失");
+    assert!(last_entry < help);
+}
+
 fn write_test_wav(path: &Path) {
     let sample_rate = 8_000_u32;
     let sample_count = 800_usize;

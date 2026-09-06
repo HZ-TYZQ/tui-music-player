@@ -93,7 +93,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         ])
     } else {
         Line::from(Span::styled(
-            " ↑↓/jk 选择 · Enter 播放 · Space 暂停 · / 搜索 · v 频谱 · P 列表 · ? 帮助 · q 退出",
+            " ↑↓/jk 选择 · Enter 播放 · Space 暂停 · / 搜索 · v 频谱 · Q 队列 · P 列表 · ? 帮助 · q 退出",
             Style::new().fg(theme.muted),
         ))
     };
