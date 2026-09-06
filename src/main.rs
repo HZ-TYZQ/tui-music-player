@@ -3,7 +3,9 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::Parser;
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -14,7 +16,7 @@ use music_player::app::App;
 use music_player::cli::{Cli, validate_directory};
 use music_player::config::{AppConfig, AppPaths};
 use music_player::media::{MediaEvent, MediaSession};
-use music_player::ui;
+use music_player::ui::{self, ViewLayout};
 
 fn main() -> ExitCode {
     match run_application() {
@@ -87,8 +89,14 @@ fn run(
     app: &mut App,
     session: Option<&MediaSession>,
 ) -> io::Result<()> {
+    let mut view = ViewLayout::default();
+    let mut mouse_captured = false;
     while !app.should_quit {
-        terminal.draw(|frame| ui::draw(frame, app))?;
+        if app.config.mouse_enabled != mouse_captured {
+            set_mouse_capture(app.config.mouse_enabled)?;
+            mouse_captured = app.config.mouse_enabled;
+        }
+        terminal.draw(|frame| ui::draw(frame, app, &mut view))?;
         // 频谱开启时把主循环提到约 50Hz，与 spectrum 源 20ms interval 对齐；
         // 关闭时回到 50ms 降低空闲唤醒。
         let poll_ms = if app.config.visualizer_enabled {
@@ -96,11 +104,18 @@ fn run(
         } else {
             50
         };
-        if event::poll(Duration::from_millis(poll_ms))?
-            && let Event::Key(key) = event::read()?
-            && key.kind == KeyEventKind::Press
-        {
-            app.handle_key(key);
+        if event::poll(Duration::from_millis(poll_ms))? {
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
+                // 鼠标捕获会连移动一起上报，这里直接丢弃，避免空闲时被持续唤醒。
+                // 关闭鼠标后即便仍有序列送达（例如被上游注入），也不再处理。
+                Event::Mouse(mouse)
+                    if mouse_captured && !matches!(mouse.kind, MouseEventKind::Moved) =>
+                {
+                    app.handle_mouse(mouse, &view);
+                }
+                _ => {}
+            }
         }
         if let Some(session) = session {
             for command in session.try_recv() {
@@ -116,14 +131,25 @@ fn run(
             }
         }
     }
+    if mouse_captured {
+        set_mouse_capture(false)?;
+    }
     Ok(())
+}
+
+fn set_mouse_capture(enabled: bool) -> io::Result<()> {
+    if enabled {
+        execute!(stdout(), EnableMouseCapture)
+    } else {
+        execute!(stdout(), DisableMouseCapture)
+    }
 }
 
 fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<io::Stdout>>> {
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
-        let _ = execute!(stdout(), LeaveAlternateScreen);
+        let _ = execute!(stdout(), DisableMouseCapture, LeaveAlternateScreen);
         original_hook(info);
     }));
 
@@ -135,6 +161,10 @@ fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<io::Stdout>>> {
 
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    )?;
     terminal.show_cursor()
 }

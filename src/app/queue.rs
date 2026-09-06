@@ -26,7 +26,7 @@ impl App {
     }
 
     /// 跳到队列中的某一项：它之前的条目视为已跳过，直接从队列丢弃。
-    fn play_queue_selected(&mut self) {
+    pub(super) fn play_queue_selected(&mut self) {
         if self.queue_selected >= self.queue.len() {
             self.message = Some("队列是空的".to_owned());
             return;

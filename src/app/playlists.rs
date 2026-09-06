@@ -125,7 +125,7 @@ impl App {
         }
     }
 
-    fn play_playlist_from_selected(&mut self) {
+    pub(super) fn play_playlist_from_selected(&mut self) {
         let Some(playlist) = self.playlists.all().get(self.playlist_selected) else {
             return;
         };

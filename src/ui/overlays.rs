@@ -4,16 +4,24 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Overlay};
 use crate::theme::Theme;
 use crate::track::Track;
 
+use super::ListView;
 use super::text::{fmt_duration, now_playing_text, truncate_display};
 
-pub(super) fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme) {
+pub(super) fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme, view: &mut ListView) {
+    // 非列表型弹层没有可点击的行；先失效，命中测试才不会用上一帧的坐标。
+    if !matches!(
+        app.overlay,
+        Overlay::Playlists | Overlay::PlaylistTracks | Overlay::Queue
+    ) {
+        view.clear();
+    }
     match app.overlay {
         Overlay::None => {}
         Overlay::Help => draw_text_popup(
@@ -31,6 +39,7 @@ pub(super) fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme) {
                 "s              开 / 关随机播放",
                 "v              显示 / 隐藏音频频谱",
                 "o / O          排序字段 / 升降序",
+                "M              开 / 关鼠标",
                 "/              实时模糊搜索",
                 "r              后台重新扫描",
                 "a / A          加到队尾 / 设为下一首",
@@ -40,12 +49,12 @@ pub(super) fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme) {
                 "q              退出",
             ],
             62,
-            21,
+            22,
             theme,
         ),
-        Overlay::Playlists => draw_playlists(frame, app, theme),
-        Overlay::Queue => draw_queue(frame, app, theme),
-        Overlay::PlaylistTracks => draw_playlist_tracks(frame, app, theme),
+        Overlay::Playlists => draw_playlists(frame, app, theme, view),
+        Overlay::Queue => draw_queue(frame, app, theme, view),
+        Overlay::PlaylistTracks => draw_playlist_tracks(frame, app, theme, view),
         Overlay::NameInput => draw_text_popup(
             frame,
             " 新建播放列表 ",
@@ -83,7 +92,7 @@ pub(super) fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme) {
     }
 }
 
-fn draw_playlists(frame: &mut Frame, app: &App, theme: &Theme) {
+fn draw_playlists(frame: &mut Frame, app: &App, theme: &Theme, view: &mut ListView) {
     let area = centered(frame.area(), 70, 70);
     frame.render_widget(Clear, area);
     let block = Block::bordered()
@@ -107,19 +116,16 @@ fn draw_playlists(frame: &mut Frame, app: &App, theme: &Theme) {
             })
             .collect()
     };
+    // 与队列面板一致：列表只用提示行以上的空间，点击行与显示行才能一一对应。
+    let (inner, viewport) = list_viewport(area, &block);
+    frame.render_widget(block, area);
     let list = List::new(items)
-        .block(block)
         .highlight_symbol(Span::styled("▸ ", Style::new().fg(theme.primary)))
         .highlight_style(Style::new().bg(theme.selection_bg).bold());
     let selected = (!app.playlists.all().is_empty()).then_some(app.playlist_selected);
-    let mut state = ListState::default().with_selected(selected);
-    frame.render_stateful_widget(list, area, &mut state);
-    let help = Rect::new(
-        area.x + 2,
-        area.bottom().saturating_sub(2),
-        area.width.saturating_sub(4),
-        1,
-    );
+    frame.render_stateful_widget(list, viewport, view.state_for(selected));
+    view.record(viewport, app.playlists.all().len());
+    let help = help_row(inner);
     frame.render_widget(
         Paragraph::new("c 新建 · a 加入选中歌曲 · Enter 查看 · x 删除 · Esc 关闭")
             .style(Style::new().fg(theme.muted)),
@@ -127,10 +133,11 @@ fn draw_playlists(frame: &mut Frame, app: &App, theme: &Theme) {
     );
 }
 
-fn draw_playlist_tracks(frame: &mut Frame, app: &App, theme: &Theme) {
+fn draw_playlist_tracks(frame: &mut Frame, app: &App, theme: &Theme, view: &mut ListView) {
     let area = centered(frame.area(), 78, 76);
     frame.render_widget(Clear, area);
     let Some(playlist) = app.playlists.all().get(app.playlist_selected) else {
+        view.clear();
         return;
     };
     let block = Block::bordered()
@@ -156,19 +163,15 @@ fn draw_playlist_tracks(frame: &mut Frame, app: &App, theme: &Theme) {
             ListItem::new(name)
         }
     });
+    let (inner, viewport) = list_viewport(area, &block);
+    frame.render_widget(block, area);
     let list = List::new(items)
-        .block(block)
         .highlight_symbol(Span::styled("▸ ", Style::new().fg(theme.primary)))
         .highlight_style(Style::new().bg(theme.selection_bg).bold());
     let selected = (!playlist.tracks.is_empty()).then_some(app.playlist_track_selected);
-    let mut state = ListState::default().with_selected(selected);
-    frame.render_stateful_widget(list, area, &mut state);
-    let help = Rect::new(
-        area.x + 2,
-        area.bottom().saturating_sub(2),
-        area.width.saturating_sub(4),
-        1,
-    );
+    frame.render_stateful_widget(list, viewport, view.state_for(selected));
+    view.record(viewport, playlist.tracks.len());
+    let help = help_row(inner);
     frame.render_widget(
         Paragraph::new("Enter 从此处播放 · d 从列表移除 · Esc 返回")
             .style(Style::new().fg(theme.muted)),
@@ -197,7 +200,7 @@ pub(super) fn resolve_queue_rows(
         .collect()
 }
 
-fn draw_queue(frame: &mut Frame, app: &App, theme: &Theme) {
+fn draw_queue(frame: &mut Frame, app: &App, theme: &Theme, view: &mut ListView) {
     let area = centered(frame.area(), 74, 70);
     frame.render_widget(Clear, area);
     let block = Block::bordered()
@@ -209,6 +212,7 @@ fn draw_queue(frame: &mut Frame, app: &App, theme: &Theme) {
         .border_style(Style::new().fg(theme.border));
 
     if app.queue.is_empty() {
+        view.clear();
         frame.render_widget(
             Paragraph::new("  队列是空的\n  在曲库中按 a 加到队尾，按 A 设为下一首")
                 .style(Style::new().fg(theme.muted))
@@ -280,23 +284,14 @@ fn draw_queue(frame: &mut Frame, app: &App, theme: &Theme) {
         });
 
     // 列表只用底部提示行以上的空间，长队列不会有条目被提示行盖住。
-    let inner = block.inner(area);
-    let viewport = Rect {
-        height: inner.height.saturating_sub(1),
-        ..inner
-    };
+    let (inner, viewport) = list_viewport(area, &block);
     frame.render_widget(block, area);
     let list = List::new(items)
         .highlight_symbol(Span::styled("▸ ", Style::new().fg(theme.primary)))
         .highlight_style(Style::new().bg(theme.selection_bg).bold());
-    let mut state = ListState::default().with_selected(Some(app.queue_selected));
-    frame.render_stateful_widget(list, viewport, &mut state);
-    let help = Rect::new(
-        inner.x + 1,
-        inner.bottom().saturating_sub(1),
-        inner.width.saturating_sub(1),
-        1,
-    );
+    frame.render_stateful_widget(list, viewport, view.state_for(Some(app.queue_selected)));
+    view.record(viewport, app.queue.len());
+    let help = help_row(inner);
     frame.render_widget(
         Paragraph::new("Enter 跳到此处播放 · d 移除 · J/K 上下移动 · c 清空 · Esc 关闭")
             .style(Style::new().fg(theme.muted)),
@@ -326,6 +321,25 @@ fn draw_text_popup(
             ),
         area,
     );
+}
+
+/// 弹层内容区，以及扣掉底部提示行之后真正留给列表的视口。
+fn list_viewport(area: Rect, block: &Block<'_>) -> (Rect, Rect) {
+    let inner = block.inner(area);
+    let viewport = Rect {
+        height: inner.height.saturating_sub(1),
+        ..inner
+    };
+    (inner, viewport)
+}
+
+fn help_row(inner: Rect) -> Rect {
+    Rect::new(
+        inner.x + 1,
+        inner.bottom().saturating_sub(1),
+        inner.width.saturating_sub(1),
+        1,
+    )
 }
 
 fn centered(area: Rect, max_width: u16, max_height: u16) -> Rect {

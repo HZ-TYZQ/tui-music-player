@@ -9,7 +9,13 @@ use crate::theme::Theme;
 use super::library::{LIST_ICON_WIDTH, playback_action_indicator};
 use super::text::{ascii_progress_bar, fmt_duration, now_playing_text};
 
-pub(super) fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
+/// 返回进度条自身占据的矩形，供点击跳转做命中测试。
+pub(super) fn draw_now_playing(
+    frame: &mut Frame,
+    app: &App,
+    area: Rect,
+    theme: &Theme,
+) -> Option<Rect> {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(theme.border))
@@ -78,4 +84,9 @@ pub(super) fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, theme: 
         ])),
         rows[1],
     );
+
+    // 进度条前有一个空格、时间文本和一个空格；只有知道总时长才谈得上跳转。
+    let bar_x = rows[1].x + position_label.len() as u16 + 2;
+    (bar_width > 0 && duration.is_some_and(|duration| !duration.is_zero()))
+        .then(|| Rect::new(bar_x, rows[1].y, bar_width as u16, 1))
 }

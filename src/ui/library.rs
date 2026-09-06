@@ -1,13 +1,14 @@
 //! 曲库列表、播放指示器和响应式列宽。
 
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, BorderType, List, ListItem, Paragraph};
 
 use crate::app::App;
 use crate::player::PlayState;
 use crate::theme::Theme;
 use crate::track::Track;
 
+use super::ListView;
 use super::text::{column_text, fmt_duration};
 
 pub(super) const PAUSE_ACTION_ICON: &str = "|| ";
@@ -22,7 +23,13 @@ pub(super) const MIN_ARTIST_WIDTH: usize = 8;
 pub(super) const MIN_ALBUM_WIDTH: usize = 8;
 const HIGHLIGHT_SYMBOL_WIDTH: usize = 2;
 
-pub(super) fn draw_library(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
+pub(super) fn draw_library(
+    frame: &mut Frame,
+    app: &App,
+    area: Rect,
+    theme: &Theme,
+    view: &mut ListView,
+) {
     let scan = if app.scanning {
         format!(" · 扫描中 {}/{} ", app.scan_progress.0, app.scan_progress.1)
     } else {
@@ -47,6 +54,7 @@ pub(super) fn draw_library(frame: &mut Frame, app: &App, area: Rect, theme: &The
         .title(title);
 
     if app.tracks.is_empty() {
+        view.clear();
         let text = if app.scanning {
             "  正在后台扫描音乐库……\n  界面仍可响应，扫描完成后歌曲会自动出现"
         } else {
@@ -90,13 +98,14 @@ pub(super) fn draw_library(frame: &mut Frame, app: &App, area: Rect, theme: &The
         Some(ListItem::new(Line::from(spans)))
     });
 
+    let inner = block.inner(area);
     let list = List::new(items)
         .block(block)
         .highlight_style(Style::new().bg(theme.selection_bg).bold())
         .highlight_symbol(Span::styled("▸ ", Style::new().fg(theme.primary)));
     let selected = (!app.visible_indices().is_empty()).then_some(app.selected);
-    let mut state = ListState::default().with_selected(selected);
-    frame.render_stateful_widget(list, area, &mut state);
+    frame.render_stateful_widget(list, area, view.state_for(selected));
+    view.record(inner, app.visible_indices().len());
 }
 
 pub(super) fn playback_action_indicator(state: PlayState, theme: &Theme) -> (&'static str, Style) {

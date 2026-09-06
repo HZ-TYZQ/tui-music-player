@@ -62,6 +62,15 @@ impl App {
         }
     }
 
+    /// 按进度条比例跳转。没有时长就无从换算，直接忽略。
+    pub(super) fn seek_to_ratio(&mut self, ratio: f64) {
+        let Some(duration) = self.effective_duration() else {
+            return;
+        };
+        let ratio = ratio.clamp(0.0, 1.0);
+        self.seek_to_requested(duration.mul_f64(ratio), None);
+    }
+
     fn seek_to_requested(&mut self, position: Duration, track_id: Option<&str>) {
         if self.player.state() == PlayState::Stopped {
             return;

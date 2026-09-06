@@ -60,6 +60,7 @@ pub struct AppConfig {
     pub shuffle: bool,
     pub sort: SortOrder,
     pub visualizer_enabled: bool,
+    pub mouse_enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,6 +75,7 @@ struct RawConfig {
     play_mode: Option<LegacyPlayMode>,
     sort: SortOrder,
     visualizer_enabled: bool,
+    mouse_enabled: bool,
 }
 
 impl Default for RawConfig {
@@ -88,6 +90,7 @@ impl Default for RawConfig {
             play_mode: None,
             sort: SortOrder::default(),
             visualizer_enabled: true,
+            mouse_enabled: true,
         }
     }
 }
@@ -103,6 +106,7 @@ impl Default for AppConfig {
             shuffle: false,
             sort: SortOrder::default(),
             visualizer_enabled: true,
+            mouse_enabled: true,
         }
     }
 }
@@ -128,6 +132,7 @@ impl AppConfig {
             shuffle: mode.shuffle,
             sort: raw.sort,
             visualizer_enabled: raw.visualizer_enabled,
+            mouse_enabled: raw.mouse_enabled,
         }
     }
 

@@ -2,6 +2,7 @@
 
 mod input;
 mod media;
+mod mouse;
 mod playback;
 mod playlists;
 mod queue;
@@ -12,7 +13,7 @@ mod tests;
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::{AppConfig, AppPaths};
 use crate::library::{LibraryEvent, LibraryWorker};
@@ -74,6 +75,8 @@ pub struct App {
     shuffle_order: Vec<usize>,
     shuffle_cursor: usize,
     media_events: Vec<MediaEvent>,
+    /// 上一次鼠标按下的时刻与位置，仅用于判定双击。
+    last_click: Option<(Instant, u16, u16)>,
 }
 
 impl App {
@@ -161,6 +164,7 @@ impl App {
             shuffle_order: Vec::new(),
             shuffle_cursor: 0,
             media_events: Vec::new(),
+            last_click: None,
         })
     }
 

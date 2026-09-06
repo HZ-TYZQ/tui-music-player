@@ -25,6 +25,7 @@ impl App {
             KeyCode::Char('-') => self.change_volume(-5),
             KeyCode::Char('=') | KeyCode::Char('+') => self.change_volume(5),
             KeyCode::Char('m') => self.toggle_mute(),
+            KeyCode::Char('M') => self.toggle_mouse(),
             KeyCode::Char('n') => self.play_next(false),
             KeyCode::Char('p') => self.play_previous(),
             KeyCode::Char('z') => self.cycle_repeat(),

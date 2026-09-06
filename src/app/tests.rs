@@ -1,10 +1,12 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::config::{AppConfig, AppPaths};
 use crate::track::{RepeatMode, SortKey, Track};
+
+use crate::ui::ViewLayout;
 
 use super::playback::short_reason;
 use super::{App, BagUpdate, Overlay};
@@ -488,7 +490,10 @@ fn queue_panel_right_aligns_durations_and_keeps_every_entry_visible() {
 
     let backend = ratatui::backend::TestBackend::new(100, 22);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
-    terminal.draw(|frame| crate::ui::draw(frame, &app)).unwrap();
+    let mut view = crate::ui::ViewLayout::default();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &app, &mut view))
+        .unwrap();
     let buffer = terminal.backend().buffer();
     let rendered: Vec<String> = (0..22)
         .map(|row| {
@@ -763,9 +768,188 @@ fn a_rescan_applies_the_configured_sort() {
     assert_eq!(order, ["alpha", "zeta"]);
 }
 
+/// 渲染一帧，得到与真实运行一致的布局，之后才能按坐标做命中测试。
+fn render(app: &App, width: u16, height: u16) -> (ViewLayout, ratatui::backend::TestBackend) {
+    let mut view = ViewLayout::default();
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, app, &mut view))
+        .unwrap();
+    (view, terminal.backend().clone())
+}
+
+fn click(column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+fn wheel(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+#[test]
+fn clicking_a_library_row_selects_it_and_double_click_plays_it() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let music = temp.path().join("music");
+    let paths: Vec<PathBuf> = ["a.wav", "b.wav", "c.wav"]
+        .iter()
+        .map(|name| music.join(name))
+        .collect();
+    for path in &paths {
+        write_test_wav(path);
+    }
+    app.tracks = paths.iter().map(|path| track(path.clone())).collect();
+    app.search.replace_tracks(&app.tracks);
+    settle_search_and_selection(&mut app);
+
+    // 曲库列表从第 1 行开始（第 0 行是边框），因此第 3 行是第 3 首。
+    let (view, _) = render(&app, 90, 24);
+    app.handle_mouse(click(10, 3), &view);
+    assert_eq!(app.selected, 2);
+    assert_eq!(app.playing_index, None);
+
+    app.handle_mouse(click(10, 3), &view);
+    assert_eq!(app.playing_index, Some(2));
+}
+
+#[test]
+fn two_clicks_on_different_rows_are_not_a_double_click() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let music = temp.path().join("music");
+    for name in ["a.wav", "b.wav"] {
+        write_test_wav(&music.join(name));
+    }
+    app.tracks = ["a.wav", "b.wav"]
+        .iter()
+        .map(|name| track(music.join(name)))
+        .collect();
+    app.search.replace_tracks(&app.tracks);
+    settle_search_and_selection(&mut app);
+
+    let (view, _) = render(&app, 90, 24);
+    app.handle_mouse(click(10, 1), &view);
+    app.handle_mouse(click(10, 2), &view);
+
+    assert_eq!(app.selected, 1);
+    assert_eq!(app.playing_index, None);
+}
+
+#[test]
+fn clicks_below_the_last_row_and_outside_the_list_are_ignored() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let music = temp.path().join("music");
+    write_test_wav(&music.join("a.wav"));
+    app.tracks = vec![track(music.join("a.wav"))];
+    app.search.replace_tracks(&app.tracks);
+    settle_search_and_selection(&mut app);
+
+    let (view, _) = render(&app, 90, 24);
+    // 列表里只有一首，下面全是空行；点空行不应该改变选中项，也不应该 panic。
+    app.handle_mouse(click(10, 6), &view);
+    app.handle_mouse(click(10, 6), &view);
+    assert_eq!(app.selected, 0);
+    assert_eq!(app.playing_index, None);
+
+    // 边框列同样在列表区域之外。
+    app.handle_mouse(click(0, 1), &view);
+    assert_eq!(app.playing_index, None);
+}
+
+#[test]
+fn clicking_the_progress_bar_seeks_within_the_current_track() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let long = temp.path().join("music").join("long.wav");
+    write_long_test_wav(&long);
+    let mut item = track(long.clone());
+    item.duration = Some(Duration::from_secs(100));
+    app.tracks = vec![item];
+    app.search.replace_tracks(&app.tracks);
+    app.play_index(0, false, BagUpdate::Reanchor).unwrap();
+
+    let (view, _) = render(&app, 90, 24);
+    let bar = view.progress.expect("进度条没有记录位置");
+    app.handle_mouse(click(bar.x + bar.width / 2, bar.y), &view);
+
+    let position = app.player.position();
+    assert!(
+        position >= Duration::from_secs(40) && position <= Duration::from_secs(60),
+        "点击进度条中点后位置是 {position:?}"
+    );
+}
+
+#[test]
+fn the_wheel_moves_the_selection_inside_the_hovered_list() {
+    let (_temp, mut app) = test_app(AppConfig::default());
+    app.tracks = (0..20)
+        .map(|index| track(PathBuf::from(format!("/music/{index:02}.wav"))))
+        .collect();
+    app.search.replace_tracks(&app.tracks);
+    settle_search_and_selection(&mut app);
+
+    let (view, _) = render(&app, 90, 24);
+    app.handle_mouse(wheel(MouseEventKind::ScrollDown, 10, 3), &view);
+    assert_eq!(app.selected, 3);
+    app.handle_mouse(wheel(MouseEventKind::ScrollUp, 10, 3), &view);
+    assert_eq!(app.selected, 0);
+
+    // 列表之外的滚动不应该动选中项。
+    app.handle_mouse(wheel(MouseEventKind::ScrollDown, 10, 23), &view);
+    assert_eq!(app.selected, 0);
+}
+
+#[test]
+fn overlay_clicks_go_to_the_overlay_list_not_the_library() {
+    let (_temp, mut app) = test_app(AppConfig::default());
+    app.tracks = (0..5)
+        .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
+        .collect();
+    app.search.replace_tracks(&app.tracks);
+    settle_search_and_selection(&mut app);
+    app.queue = app.tracks.iter().map(|track| track.path.clone()).collect();
+    app.overlay = Overlay::Queue;
+
+    let (view, backend) = render(&app, 90, 24);
+    // 找到队列面板第 3 行的屏幕坐标，点它。
+    let row = (0..24)
+        .find(|row| {
+            (0..90)
+                .map(|column| backend.buffer()[(column, *row)].symbol())
+                .collect::<String>()
+                .contains(" 3. ")
+        })
+        .expect("队列第 3 行没有渲染出来");
+    let queue_area_column = view
+        .overlay
+        .index_at(row)
+        .map(|_| 45)
+        .expect("该行不在队列列表内");
+
+    app.handle_mouse(click(queue_area_column, row), &view);
+
+    assert_eq!(app.queue_selected, 2);
+    // 曲库的选中项不能被弹层上的点击带偏。
+    assert_eq!(app.selected, 0);
+}
+
+fn write_long_test_wav(path: &Path) {
+    write_wav(path, 8_000, 8_000 * 100);
+}
+
 fn write_test_wav(path: &Path) {
-    let sample_rate = 8_000_u32;
-    let sample_count = 800_usize;
+    write_wav(path, 8_000, 800);
+}
+
+fn write_wav(path: &Path, sample_rate: u32, sample_count: usize) {
     let data_len = (sample_count * 2) as u32;
     let mut wav = Vec::with_capacity(44 + data_len as usize);
     wav.extend_from_slice(b"RIFF");
