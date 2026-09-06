@@ -137,12 +137,13 @@ impl App {
             return;
         };
         self.queue = paths.collect();
-        if self.play_path(&first, true, BagUpdate::Reanchor) {
-            self.overlay = Overlay::None;
-        } else {
-            self.play_next(false);
-            if self.playing_index.is_some() {
-                self.overlay = Overlay::None;
+        match self.play_path(&first, true, BagUpdate::Reanchor) {
+            Ok(()) => self.overlay = Overlay::None,
+            Err(skip) => {
+                self.advance(false, vec![skip]);
+                if self.playing_index.is_some() {
+                    self.overlay = Overlay::None;
+                }
             }
         }
     }

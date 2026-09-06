@@ -22,6 +22,8 @@ use crate::search::SearchIndex;
 use crate::spectrum::SpectrumProcessor;
 use crate::track::Track;
 
+use playback::Skip;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Overlay {
     None,
@@ -207,9 +209,13 @@ impl App {
             match event {
                 PlayerEvent::EndOfStream => self.play_next(true),
                 PlayerEvent::Error(error) => {
-                    self.message = Some(format!("播放失败: {error}；正在尝试下一首"));
+                    let name = self
+                        .current_track()
+                        .map(|track| track.display_title().to_owned())
+                        .unwrap_or_else(|| "当前曲目".to_owned());
                     // 播放错误不是自然结束；单曲循环也应先尝试后续歌曲。
-                    self.play_next(false);
+                    // 原因随这一轮带下去，成功切歌后才汇总，避免被清屏抹掉。
+                    self.advance(false, vec![Skip::new(name, format!("播放中断: {error}"))]);
                 }
                 PlayerEvent::StateChanged(_) => {}
                 PlayerEvent::SpectrumFrame {

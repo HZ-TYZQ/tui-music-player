@@ -7,21 +7,65 @@ use crate::track::{PlaybackMode, RepeatMode};
 
 use super::{App, BagUpdate};
 
-impl App {
-    pub(super) fn play_selected(&mut self) {
-        if let Some(index) = self.selected_track_index() {
-            self.play_index(index, true, BagUpdate::Reanchor);
+/// 一次切歌失败的可读原因。它不直接写进 `message`，
+/// 因为自动跳过时要等落到能播的曲目后才汇总，否则会被成功切歌清掉。
+pub(super) struct Skip {
+    name: String,
+    reason: String,
+}
+
+impl Skip {
+    pub(super) fn new(name: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            reason: reason.into(),
         }
     }
 
+    /// 用户直接点播失败时的提示：这不是“跳过”，而是这一次没播成。
+    pub(super) fn into_message(self) -> String {
+        format!("无法播放“{}”：{}", self.name, self.reason)
+    }
+}
+
+/// 播放器的错误串里带绝对路径，写日志合适，但提示只有一行，
+/// 路径会把真正的原因挤出屏幕；提示已经点名了曲目，这里按已知路径裁掉。
+pub(super) fn short_reason(error: &str, path: &Path) -> String {
+    error
+        .replace(&path.display().to_string(), "")
+        .replace(" :", ":")
+        .trim()
+        .trim_end_matches(':')
+        .trim_end()
+        .to_owned()
+}
+
+fn file_label(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+impl App {
+    pub(super) fn play_selected(&mut self) {
+        if let Some(index) = self.selected_track_index()
+            && let Err(skip) = self.play_index(index, true, BagUpdate::Reanchor)
+        {
+            self.message = Some(skip.into_message());
+        }
+    }
+
+    /// 切歌失败的原因不写进 `message`，而是交回调用方：
+    /// 直接播放要立刻报错，自动跳过则要等落到能播的曲目后再汇总。
     pub(super) fn play_index(
         &mut self,
         index: usize,
         remember_current: bool,
         bag: BagUpdate,
-    ) -> bool {
+    ) -> Result<(), Skip> {
         let Some(track) = self.tracks.get(index) else {
-            return false;
+            return Err(Skip::new(format!("#{}", index + 1), "不在曲库中"));
         };
         let path = track.path.clone();
         let previous = remember_current
@@ -55,12 +99,12 @@ impl App {
                     BagUpdate::Reanchor if self.config.shuffle => self.reanchor_shuffle_bag(index),
                     BagUpdate::Reanchor | BagUpdate::Leave => {}
                 }
-                true
+                Ok(())
             }
-            Err(error) => {
-                self.message = Some(format!("播放失败: {error}"));
-                false
-            }
+            Err(error) => Err(Skip::new(
+                self.tracks[index].display_title().to_owned(),
+                short_reason(&error, &path),
+            )),
         }
     }
 
@@ -69,18 +113,23 @@ impl App {
         path: &Path,
         remember_current: bool,
         bag: BagUpdate,
-    ) -> bool {
-        self.index_for_path(path)
-            .map(|index| self.play_index(index, remember_current, bag))
-            .unwrap_or_else(|| {
-                self.message = Some(format!("歌曲不存在，已跳过: {}", path.display()));
-                false
-            })
+    ) -> Result<(), Skip> {
+        match self.index_for_path(path) {
+            Some(index) => self.play_index(index, remember_current, bag),
+            None => Err(Skip::new(file_label(path), "不在曲库中")),
+        }
     }
 
     pub(super) fn play_next(&mut self, natural_end: bool) {
+        self.advance(natural_end, Vec::new());
+    }
+
+    /// `skipped` 让调用方带入这一轮已经发生的失败（例如播放途中解码出错），
+    /// 与后续自动跳过合并成同一条提示，而不是被下一次成功切歌清掉。
+    pub(super) fn advance(&mut self, natural_end: bool, mut skipped: Vec<Skip>) {
         if self.tracks.is_empty() {
             self.playing_index = None;
+            self.report_skipped(&skipped);
             return;
         }
         let max_attempts = self.tracks.len().saturating_add(self.queue.len()).max(1);
@@ -88,18 +137,27 @@ impl App {
         let mut natural_end = natural_end;
         for _ in 0..max_attempts {
             if let Some(path) = self.queue.pop_front() {
-                if self.play_path(&path, true, BagUpdate::Leave) {
-                    return;
+                match self.play_path(&path, true, BagUpdate::Leave) {
+                    Ok(()) => {
+                        self.report_skipped(&skipped);
+                        return;
+                    }
+                    Err(skip) => skipped.push(skip),
                 }
                 continue;
             }
             let Some(next) = self.next_library_index_from(library_cursor, natural_end) else {
                 self.player.stop();
                 self.playing_index = None;
+                self.report_skipped(&skipped);
                 return;
             };
-            if self.play_index(next, true, BagUpdate::Leave) {
-                return;
+            match self.play_index(next, true, BagUpdate::Leave) {
+                Ok(()) => {
+                    self.report_skipped(&skipped);
+                    return;
+                }
+                Err(skip) => skipped.push(skip),
             }
             // 加载失败不会改变 playing_index，因此用局部游标继续向后尝试。
             // 单曲循环在自然结束后优先重载当前曲；若重载失败，
@@ -109,7 +167,22 @@ impl App {
         }
         self.player.stop();
         self.playing_index = None;
-        self.message = Some("没有可播放的下一首歌曲".to_owned());
+        self.message = Some(no_playable_message("下一首", skipped.len()));
+    }
+
+    /// 成功切歌后汇总这一轮跳过的曲目。没有跳过就不碰 `message`，
+    /// 让 `play_index` 的清屏行为保持原样。
+    fn report_skipped(&mut self, skipped: &[Skip]) {
+        let Some(first) = skipped.first() else {
+            return;
+        };
+        self.message = Some(match skipped.len() {
+            1 => format!("已跳过“{}”：{}", first.name, first.reason),
+            count => format!(
+                "已跳过 {count} 首无法播放的歌曲，其中“{}”：{}",
+                first.name, first.reason
+            ),
+        });
     }
 
     #[cfg(test)]
@@ -203,12 +276,21 @@ impl App {
     }
 
     pub(super) fn play_previous(&mut self) {
+        let mut skipped = Vec::new();
         while let Some(path) = self.history.pop() {
-            if self.play_path(&path, false, BagUpdate::Reanchor) {
-                return;
+            match self.play_path(&path, false, BagUpdate::Reanchor) {
+                Ok(()) => {
+                    self.report_skipped(&skipped);
+                    return;
+                }
+                Err(skip) => skipped.push(skip),
             }
         }
-        self.message = Some("没有上一首播放记录".to_owned());
+        self.message = Some(if skipped.is_empty() {
+            "没有上一首播放记录".to_owned()
+        } else {
+            no_playable_message("上一首", skipped.len())
+        });
     }
 
     pub(super) fn enqueue_selected(&mut self, next: bool) {
@@ -281,8 +363,10 @@ impl App {
             PlayState::Playing => {}
             PlayState::Paused => self.player.resume(),
             PlayState::Stopped => {
-                if let Some(index) = self.playing_index.or_else(|| self.selected_track_index()) {
-                    self.play_index(index, false, BagUpdate::Reanchor);
+                if let Some(index) = self.playing_index.or_else(|| self.selected_track_index())
+                    && let Err(skip) = self.play_index(index, false, BagUpdate::Reanchor)
+                {
+                    self.message = Some(skip.into_message());
                 }
             }
         }
@@ -312,5 +396,13 @@ impl App {
         self.rng_state ^= self.rng_state >> 7;
         self.rng_state ^= self.rng_state << 17;
         (self.rng_state as usize) % upper
+    }
+}
+
+fn no_playable_message(direction: &str, skipped: usize) -> String {
+    if skipped == 0 {
+        format!("没有可播放的{direction}歌曲")
+    } else {
+        format!("没有可播放的{direction}歌曲（已跳过 {skipped} 首）")
     }
 }

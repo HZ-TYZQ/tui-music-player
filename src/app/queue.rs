@@ -36,12 +36,13 @@ impl App {
         let Some(path) = self.queue.pop_front() else {
             return;
         };
-        if self.play_path(&path, true, BagUpdate::Reanchor) {
+        let Err(skip) = self.play_path(&path, true, BagUpdate::Reanchor) else {
             self.overlay = Overlay::None;
             return;
-        }
-        // 该条目无法播放时沿队列继续向后尝试，与自动切歌的跳过行为一致。
-        self.play_next(false);
+        };
+        // 该条目无法播放时沿队列继续向后尝试，与自动切歌的跳过行为一致；
+        // 它的失败原因并入这一轮的汇总提示。
+        self.advance(false, vec![skip]);
         if self.playing_index.is_some() {
             self.overlay = Overlay::None;
         }

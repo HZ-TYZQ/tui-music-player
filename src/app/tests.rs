@@ -6,6 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::config::{AppConfig, AppPaths};
 use crate::track::{RepeatMode, Track};
 
+use super::playback::short_reason;
 use super::{App, Overlay};
 
 fn test_app(config: AppConfig) -> (tempfile::TempDir, App) {
@@ -521,6 +522,133 @@ fn queue_panel_right_aligns_durations_and_keeps_every_entry_visible() {
         .position(|line| line.contains("J/K"))
         .expect("提示行缺失");
     assert!(last_entry < help);
+}
+
+#[test]
+fn skipping_a_broken_track_leaves_a_notice_after_the_next_track_starts() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let music = temp.path().join("music");
+    let first = music.join("a.wav");
+    let broken = music.join("b.wav");
+    let good = music.join("c.wav");
+    write_test_wav(&first);
+    std::fs::write(&broken, b"not audio").unwrap();
+    write_test_wav(&good);
+    let mut broken_track = track(broken);
+    broken_track.title = "坏文件".to_owned();
+    app.tracks = vec![track(first), broken_track, track(good)];
+    app.search.replace_tracks(&app.tracks);
+    app.playing_index = Some(0);
+
+    app.play_next(false);
+
+    // 成功切歌会清空 message，跳过原因必须在那之后重新写回来。
+    assert_eq!(app.playing_index, Some(2));
+    let message = app.message.clone().expect("跳过提示丢失");
+    assert!(message.contains("已跳过"), "{message}");
+    assert!(message.contains("坏文件"), "{message}");
+}
+
+#[test]
+fn several_skips_in_one_advance_collapse_into_a_counted_notice() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let music = temp.path().join("music");
+    let good = music.join("c.wav");
+    write_test_wav(&good);
+    let mut broken = Vec::new();
+    for name in ["b1.wav", "b2.wav"] {
+        let path = music.join(name);
+        std::fs::write(&path, b"not audio").unwrap();
+        broken.push(path);
+    }
+    app.tracks = vec![
+        track(music.join("start.wav")),
+        track(broken[0].clone()),
+        track(broken[1].clone()),
+        track(good),
+    ];
+    app.search.replace_tracks(&app.tracks);
+    app.playing_index = Some(0);
+
+    app.play_next(false);
+
+    assert_eq!(app.playing_index, Some(3));
+    let message = app.message.clone().expect("跳过提示丢失");
+    assert!(message.starts_with("已跳过 2 首"), "{message}");
+}
+
+#[test]
+fn a_queue_entry_missing_from_the_library_is_named_in_the_notice() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let music = temp.path().join("music");
+    let good = music.join("c.wav");
+    write_test_wav(&good);
+    app.tracks = vec![track(good)];
+    app.search.replace_tracks(&app.tracks);
+    app.queue = vec![PathBuf::from("/gone/不在库里.flac")].into();
+    app.overlay = Overlay::Queue;
+    // 列表循环让“下一首”与光标是否已经落到曲库上无关，避免依赖搜索线程的时序。
+    app.config.repeat = RepeatMode::All;
+
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert_eq!(app.playing_index, Some(0));
+    let message = app.message.clone().expect("跳过提示丢失");
+    assert!(message.contains("不在库里.flac"), "{message}");
+    assert!(message.contains("不在曲库中"), "{message}");
+}
+
+#[test]
+fn playing_a_track_directly_reports_the_failure_instead_of_a_skip() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let broken = temp.path().join("music").join("broken.wav");
+    std::fs::write(&broken, b"not audio").unwrap();
+    let mut broken_track = track(broken);
+    broken_track.title = "坏文件".to_owned();
+    app.tracks = vec![broken_track];
+    app.search.replace_tracks(&app.tracks);
+
+    app.play_selected();
+
+    assert_eq!(app.playing_index, None);
+    let message = app.message.clone().expect("失败提示丢失");
+    assert!(message.starts_with("无法播放“坏文件”"), "{message}");
+}
+
+#[test]
+fn a_clean_track_change_still_clears_the_previous_message() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let good = temp.path().join("music").join("a.wav");
+    write_test_wav(&good);
+    app.tracks = vec![track(good)];
+    app.search.replace_tracks(&app.tracks);
+    app.message = Some("音量 50%".to_owned());
+
+    app.play_selected();
+
+    assert_eq!(app.playing_index, Some(0));
+    assert_eq!(app.message, None);
+}
+
+#[test]
+fn short_reason_drops_the_path_from_every_player_error_shape() {
+    let path = Path::new("/music/曲目 名.mp3");
+    let cases = [
+        ("音频文件不存在: /music/曲目 名.mp3", "音频文件不存在"),
+        ("空文件: /music/曲目 名.mp3", "空文件"),
+        ("暂不支持 Opus: /music/曲目 名.mp3", "暂不支持 Opus"),
+        (
+            "无法识别或解码 /music/曲目 名.mp3: end of stream",
+            "无法识别或解码: end of stream",
+        ),
+        (
+            "无法打开 /music/曲目 名.mp3: Permission denied",
+            "无法打开: Permission denied",
+        ),
+    ];
+    for (error, expected) in cases {
+        assert_eq!(short_reason(error, path), expected, "{error}");
+    }
 }
 
 fn write_test_wav(path: &Path) {
