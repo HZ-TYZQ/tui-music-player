@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::track::{LegacyPlayMode, RepeatMode};
+use crate::track::{LegacyPlayMode, RepeatMode, SortOrder};
 
 const APP_DIR: &str = "tui-music-player";
 const CONFIG_VERSION: u32 = 1;
@@ -58,6 +58,7 @@ pub struct AppConfig {
     pub muted: bool,
     pub repeat: RepeatMode,
     pub shuffle: bool,
+    pub sort: SortOrder,
     pub visualizer_enabled: bool,
 }
 
@@ -71,6 +72,7 @@ struct RawConfig {
     repeat: Option<RepeatMode>,
     shuffle: Option<bool>,
     play_mode: Option<LegacyPlayMode>,
+    sort: SortOrder,
     visualizer_enabled: bool,
 }
 
@@ -84,6 +86,7 @@ impl Default for RawConfig {
             repeat: None,
             shuffle: None,
             play_mode: None,
+            sort: SortOrder::default(),
             visualizer_enabled: true,
         }
     }
@@ -98,6 +101,7 @@ impl Default for AppConfig {
             muted: false,
             repeat: RepeatMode::None,
             shuffle: false,
+            sort: SortOrder::default(),
             visualizer_enabled: true,
         }
     }
@@ -122,6 +126,7 @@ impl AppConfig {
             muted: raw.muted,
             repeat: mode.repeat,
             shuffle: mode.shuffle,
+            sort: raw.sort,
             visualizer_enabled: raw.visualizer_enabled,
         }
     }

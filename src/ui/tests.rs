@@ -148,6 +148,8 @@ fn track_row_columns_respect_the_layout_width() {
         album: Some("一张名字也非常非常长的专辑".to_owned()),
         duration: Some(Duration::from_secs(3_661)),
         format: Some("MPEG-4 AAC".to_owned()),
+        track_number: None,
+        disc_number: None,
         file_size: 1,
         modified_ns: 1,
     };
@@ -236,6 +238,8 @@ fn queue_test_track(path: PathBuf) -> Track {
         album: None,
         duration: Some(Duration::from_secs(1)),
         format: Some("WAV".to_owned()),
+        track_number: None,
+        disc_number: None,
         file_size: 1,
         modified_ns: 1,
     }

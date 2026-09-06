@@ -4,10 +4,10 @@ use std::time::{Duration, Instant};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::config::{AppConfig, AppPaths};
-use crate::track::{RepeatMode, Track};
+use crate::track::{RepeatMode, SortKey, Track};
 
 use super::playback::short_reason;
-use super::{App, Overlay};
+use super::{App, BagUpdate, Overlay};
 
 fn test_app(config: AppConfig) -> (tempfile::TempDir, App) {
     let temp = tempfile::tempdir().unwrap();
@@ -32,6 +32,8 @@ fn track(path: PathBuf) -> Track {
         album: None,
         duration: Some(Duration::from_secs(1)),
         format: Some("WAV".to_owned()),
+        track_number: None,
+        disc_number: None,
         file_size: 1,
         modified_ns: 1,
     }
@@ -112,10 +114,14 @@ fn rescan_preserves_selected_track_by_path() {
     app.search.replace_tracks(&app.tracks);
     app.selected = 2;
 
-    let mut rescanned: Vec<Track> = paths.iter().map(|path| track(path.clone())).collect();
-    rescanned.rotate_left(2);
+    // 曲库会按配置排序，扫描顺序不再能制造位移；用少一首曲目让下标真正错位。
+    let rescanned: Vec<Track> = [0, 2, 3]
+        .iter()
+        .map(|index| track(paths[*index].clone()))
+        .collect();
     app.apply_scan_finished(rescanned, Vec::new());
 
+    assert_eq!(app.selected, 1);
     assert_eq!(
         app.selected_track().map(|track| track.path.clone()),
         Some(paths[2].clone())
@@ -135,9 +141,11 @@ fn rescan_preserves_selected_track_after_active_search_settles() {
     assert_eq!(app.visible_indices(), &[0, 1, 2, 3]);
     app.selected = 2;
 
-    let mut rescanned: Vec<Track> = paths.iter().map(|path| track(path.clone())).collect();
     // 2.wav 重扫后位于可见结果第 1 项，确保错误回退到第 0 项无法通过测试。
-    rescanned.rotate_left(1);
+    let rescanned: Vec<Track> = [0, 2, 3]
+        .iter()
+        .map(|index| track(paths[*index].clone()))
+        .collect();
     app.apply_scan_finished(rescanned, Vec::new());
     settle_search_and_selection(&mut app);
 
@@ -649,6 +657,110 @@ fn short_reason_drops_the_path_from_every_player_error_shape() {
     for (error, expected) in cases {
         assert_eq!(short_reason(error, path), expected, "{error}");
     }
+}
+
+fn titled_track(path: PathBuf, title: &str) -> Track {
+    let mut item = track(path);
+    item.title = title.to_owned();
+    item
+}
+
+/// 三首歌的路径顺序（a、b、c）和标题顺序（alpha、mid、zeta）刻意相反，
+/// 这样排序切换一定会移动下标，测试不会因为两种顺序恰好一致而失效。
+fn sort_fixture(app: &mut App, music: &Path) -> Vec<PathBuf> {
+    let paths: Vec<PathBuf> = ["a.wav", "b.wav", "c.wav"]
+        .iter()
+        .map(|name| music.join(name))
+        .collect();
+    for path in &paths {
+        write_test_wav(path);
+    }
+    app.tracks = vec![
+        titled_track(paths[0].clone(), "zeta"),
+        titled_track(paths[1].clone(), "alpha"),
+        titled_track(paths[2].clone(), "mid"),
+    ];
+    app.search.replace_tracks(&app.tracks);
+    paths
+}
+
+#[test]
+fn cycling_the_sort_key_reorders_the_library_and_keeps_the_playing_track() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let paths = sort_fixture(&mut app, &temp.path().join("music"));
+    app.play_index(0, false, BagUpdate::Reanchor).unwrap();
+    assert_eq!(app.playing_index, Some(0));
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+
+    assert_eq!(app.config.sort.key, SortKey::Title);
+    let order: Vec<&str> = app
+        .tracks
+        .iter()
+        .map(|track| track.title.as_str())
+        .collect();
+    assert_eq!(order, ["alpha", "mid", "zeta"]);
+    // 正在播放的是同一个文件，只是它在列表里的位置变了。
+    assert_eq!(app.playing_index, Some(2));
+    assert_eq!(
+        app.player.current_path().unwrap().canonicalize().unwrap(),
+        paths[0].canonicalize().unwrap()
+    );
+}
+
+#[test]
+fn toggling_the_sort_direction_reverses_the_library() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    sort_fixture(&mut app, &temp.path().join("music"));
+    app.config.sort.key = SortKey::Title;
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('O'), KeyModifiers::NONE));
+
+    assert!(app.config.sort.descending);
+    let order: Vec<&str> = app
+        .tracks
+        .iter()
+        .map(|track| track.title.as_str())
+        .collect();
+    assert_eq!(order, ["zeta", "mid", "alpha"]);
+    assert!(app.message.as_deref().unwrap().contains("标题 ↓"));
+}
+
+#[test]
+fn resorting_reanchors_the_shuffle_bag_onto_the_new_indices() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    sort_fixture(&mut app, &temp.path().join("music"));
+    app.config.shuffle = true;
+    app.play_index(0, false, BagUpdate::Reanchor).unwrap();
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+
+    // 重排让所有下标失效，随机袋必须重建到新下标上，并从当前曲目开始。
+    assert_eq!(app.shuffle_order.first().copied(), app.playing_index);
+    let mut covered = app.shuffle_order.clone();
+    covered.sort_unstable();
+    assert_eq!(covered, (0..app.tracks.len()).collect::<Vec<_>>());
+}
+
+#[test]
+fn a_rescan_applies_the_configured_sort() {
+    let (_temp, mut app) = test_app(AppConfig::default());
+    app.config.sort.key = SortKey::Title;
+
+    app.apply_scan_finished(
+        vec![
+            titled_track(PathBuf::from("/music/a.wav"), "zeta"),
+            titled_track(PathBuf::from("/music/b.wav"), "alpha"),
+        ],
+        Vec::new(),
+    );
+
+    let order: Vec<&str> = app
+        .tracks
+        .iter()
+        .map(|track| track.title.as_str())
+        .collect();
+    assert_eq!(order, ["alpha", "zeta"]);
 }
 
 fn write_test_wav(path: &Path) {

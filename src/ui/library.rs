@@ -30,6 +30,11 @@ pub(super) fn draw_library(frame: &mut Frame, app: &App, area: Rect, theme: &The
     };
     let title = Line::from(vec![
         Span::styled(" ♪ Music Player ", Style::new().fg(theme.primary).bold()),
+        // 排序紧跟标题：音乐库路径可能很长，放它后面会先被标题栏截掉。
+        Span::styled(
+            format!("· {} ", app.config.sort.label()),
+            Style::new().fg(theme.muted),
+        ),
         Span::styled(
             format!("· {}", app.library_dir.display()),
             Style::new().fg(theme.muted),

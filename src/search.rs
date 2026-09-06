@@ -116,6 +116,8 @@ mod tests {
             album: Some(album.to_owned()),
             duration: Some(Duration::from_secs(1)),
             format: Some("FLAC".to_owned()),
+            track_number: None,
+            disc_number: None,
             file_size: 1,
             modified_ns: 1,
         }

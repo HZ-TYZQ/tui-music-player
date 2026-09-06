@@ -9,6 +9,7 @@ use super::{App, BagUpdate};
 
 /// 一次切歌失败的可读原因。它不直接写进 `message`，
 /// 因为自动跳过时要等落到能播的曲目后才汇总，否则会被成功切歌清掉。
+#[derive(Debug)]
 pub(super) struct Skip {
     name: String,
     reason: String,

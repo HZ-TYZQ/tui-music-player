@@ -5,6 +5,7 @@ mod media;
 mod playback;
 mod playlists;
 mod queue;
+mod sorting;
 
 #[cfg(test)]
 mod tests;
@@ -241,11 +242,14 @@ impl App {
         self.spectrum.bars()
     }
 
-    /// 应用一次完整扫描结果，并按路径尽量保留正在播放与选中的歌曲位置。
-    fn apply_scan_finished(&mut self, tracks: Vec<Track>, warnings: Vec<String>) {
+    /// 换掉整个曲目集合并重建所有派生下标。重新扫描和重排都走这里：
+    /// 两者都会让 `playing_index`、搜索结果和随机袋里的下标全部失效。
+    pub(super) fn replace_tracks(&mut self, tracks: Vec<Track>) {
         let current_path = self.player.current_path().map(Path::to_path_buf);
         let selected_path = self.selected_track().map(|track| track.path.clone());
+        let sort = self.config.sort;
         self.tracks = tracks;
+        self.tracks.sort_by(|left, right| sort.compare(left, right));
         self.duration_column_width = self
             .tracks
             .iter()
@@ -268,6 +272,11 @@ impl App {
         }
         self.pending_selected_path = selected_path;
         self.restore_pending_selection();
+    }
+
+    /// 应用一次完整扫描结果，并按路径尽量保留正在播放与选中的歌曲位置。
+    fn apply_scan_finished(&mut self, tracks: Vec<Track>, warnings: Vec<String>) {
+        self.replace_tracks(tracks);
         self.scanning = false;
         self.scan_progress = (self.tracks.len(), self.tracks.len());
         self.message = if warnings.is_empty() {

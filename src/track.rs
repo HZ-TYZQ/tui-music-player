@@ -1,5 +1,6 @@
 //! 曲目和播放顺序等核心数据模型。
 
+use std::cmp::Ordering;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -14,6 +15,8 @@ pub struct Track {
     pub album: Option<String>,
     pub duration: Option<Duration>,
     pub format: Option<String>,
+    pub track_number: Option<u32>,
+    pub disc_number: Option<u32>,
     pub file_size: u64,
     pub modified_ns: i64,
 }
@@ -38,6 +41,128 @@ impl Track {
             self.relative_path.to_string_lossy().into_owned(),
         ]
     }
+}
+
+/// 曲库列表的排序字段。播放顺序跟随列表顺序，因此它同时决定顺序播放的走向。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SortKey {
+    #[default]
+    Path,
+    Title,
+    Artist,
+    Album,
+    Duration,
+}
+
+impl SortKey {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Path => Self::Title,
+            Self::Title => Self::Artist,
+            Self::Artist => Self::Album,
+            Self::Album => Self::Duration,
+            Self::Duration => Self::Path,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Path => "路径",
+            Self::Title => "标题",
+            Self::Artist => "歌手",
+            Self::Album => "专辑",
+            Self::Duration => "时长",
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SortOrder {
+    pub key: SortKey,
+    pub descending: bool,
+}
+
+impl SortOrder {
+    pub fn label(self) -> String {
+        format!(
+            "{} {}",
+            self.key.label(),
+            if self.descending { "↓" } else { "↑" }
+        )
+    }
+
+    /// 缺失的字段永远排在最后，不随升降序翻转：把"未知歌手"翻到最前面
+    /// 对使用者没有意义，只会把真正想看的内容推下去。
+    pub fn compare(self, left: &Track, right: &Track) -> Ordering {
+        let presence = match self.key {
+            SortKey::Path | SortKey::Title => Ordering::Equal,
+            SortKey::Artist => missing_last(left.artist.as_deref(), right.artist.as_deref()),
+            SortKey::Album => missing_last(left.album.as_deref(), right.album.as_deref()),
+            SortKey::Duration => missing_last(left.duration, right.duration),
+        };
+        if presence != Ordering::Equal {
+            return presence;
+        }
+        let primary = match self.key {
+            SortKey::Path => Ordering::Equal,
+            SortKey::Title => fold(left.display_title()).cmp(&fold(right.display_title())),
+            SortKey::Artist => {
+                fold_opt(left.artist.as_deref()).cmp(&fold_opt(right.artist.as_deref()))
+            }
+            SortKey::Album => {
+                fold_opt(left.album.as_deref()).cmp(&fold_opt(right.album.as_deref()))
+            }
+            SortKey::Duration => left.duration.cmp(&right.duration),
+        };
+        // 方向作用在整条比较链上，而不只是主键：按路径排序时主键恒等，
+        // 只翻转主键会让降序完全失效。
+        let ordering = primary.then_with(|| self.secondary(left, right));
+        if self.descending {
+            ordering.reverse()
+        } else {
+            ordering
+        }
+    }
+
+    /// 主键相同时的固定次序，始终升序，保证同一份曲库每次排出的结果一致。
+    fn secondary(self, left: &Track, right: &Track) -> Ordering {
+        let grouped = match self.key {
+            // 按路径排序时再引入专辑会打乱同一目录内的文件顺序。
+            SortKey::Path | SortKey::Title | SortKey::Duration => Ordering::Equal,
+            SortKey::Artist | SortKey::Album => {
+                missing_last(left.album.as_deref(), right.album.as_deref())
+                    .then_with(|| {
+                        fold_opt(left.album.as_deref()).cmp(&fold_opt(right.album.as_deref()))
+                    })
+                    .then_with(|| left.disc_number.cmp(&right.disc_number))
+                    .then_with(|| left.track_number.cmp(&right.track_number))
+            }
+        };
+        grouped
+            .then_with(|| path_fold(left).cmp(&path_fold(right)))
+            .then_with(|| left.relative_path.cmp(&right.relative_path))
+    }
+}
+
+fn missing_last<T>(left: Option<T>, right: Option<T>) -> Ordering {
+    match (left, right) {
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        _ => Ordering::Equal,
+    }
+}
+
+fn fold(value: &str) -> String {
+    value.to_lowercase()
+}
+
+fn fold_opt(value: Option<&str>) -> String {
+    value.map(fold).unwrap_or_default()
+}
+
+fn path_fold(track: &Track) -> String {
+    fold(&track.relative_path.to_string_lossy())
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,5 +238,173 @@ impl LegacyPlayMode {
                 shuffle: true,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(title: &str, artist: Option<&str>, album: Option<&str>, path: &str) -> Track {
+        Track {
+            path: PathBuf::from(path),
+            relative_path: PathBuf::from(path),
+            title: title.to_owned(),
+            artist: artist.map(str::to_owned),
+            album: album.map(str::to_owned),
+            duration: Some(Duration::from_secs(60)),
+            format: Some("FLAC".to_owned()),
+            track_number: None,
+            disc_number: None,
+            file_size: 1,
+            modified_ns: 1,
+        }
+    }
+
+    fn sorted(mut tracks: Vec<Track>, order: SortOrder) -> Vec<String> {
+        tracks.sort_by(|left, right| order.compare(left, right));
+        tracks
+            .into_iter()
+            .map(|track| track.relative_path.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn title_sort_is_case_insensitive_and_reverses_cleanly() {
+        let tracks = vec![
+            track("banana", None, None, "b.flac"),
+            track("Apple", None, None, "a.flac"),
+            track("cherry", None, None, "c.flac"),
+        ];
+        let ascending = SortOrder {
+            key: SortKey::Title,
+            descending: false,
+        };
+        assert_eq!(
+            sorted(tracks.clone(), ascending),
+            ["a.flac", "b.flac", "c.flac"]
+        );
+        assert_eq!(
+            sorted(
+                tracks,
+                SortOrder {
+                    descending: true,
+                    ..ascending
+                }
+            ),
+            ["c.flac", "b.flac", "a.flac"]
+        );
+    }
+
+    #[test]
+    fn missing_values_stay_last_in_both_directions() {
+        let tracks = vec![
+            track("x", None, None, "unknown.flac"),
+            track("x", Some("Beta"), None, "beta.flac"),
+            track("x", Some("Alpha"), None, "alpha.flac"),
+        ];
+        let ascending = SortOrder {
+            key: SortKey::Artist,
+            descending: false,
+        };
+        assert_eq!(
+            sorted(tracks.clone(), ascending),
+            ["alpha.flac", "beta.flac", "unknown.flac"]
+        );
+        // 把“未知歌手”翻到最前面没有意义，降序也让它留在末尾。
+        assert_eq!(
+            sorted(
+                tracks,
+                SortOrder {
+                    descending: true,
+                    ..ascending
+                }
+            ),
+            ["beta.flac", "alpha.flac", "unknown.flac"]
+        );
+    }
+
+    #[test]
+    fn album_sort_orders_by_disc_then_track_number() {
+        let mut tracks = Vec::new();
+        for (disc, number, name) in [
+            (2, 1, "d2t1.flac"),
+            (1, 10, "d1t10.flac"),
+            (1, 2, "d1t2.flac"),
+        ] {
+            let mut item = track("x", Some("A"), Some("专辑"), name);
+            item.disc_number = Some(disc);
+            item.track_number = Some(number);
+            tracks.push(item);
+        }
+        // 音轨号按数值比较：10 必须排在 2 之后，而不是按字符串排到前面。
+        assert_eq!(
+            sorted(
+                tracks,
+                SortOrder {
+                    key: SortKey::Album,
+                    descending: false
+                }
+            ),
+            ["d1t2.flac", "d1t10.flac", "d2t1.flac"]
+        );
+    }
+
+    #[test]
+    fn path_sort_ignores_album_grouping() {
+        let tracks = vec![
+            track("x", Some("A"), Some("Z 专辑"), "01.flac"),
+            track("x", Some("A"), Some("A 专辑"), "02.flac"),
+        ];
+        // 按路径排序时引入专辑分组会打乱同一目录内的文件顺序。
+        assert_eq!(
+            sorted(
+                tracks,
+                SortOrder {
+                    key: SortKey::Path,
+                    descending: false
+                }
+            ),
+            ["01.flac", "02.flac"]
+        );
+    }
+
+    #[test]
+    fn descending_reverses_keys_whose_primary_value_is_always_equal() {
+        let tracks = vec![
+            track("x", None, None, "a.flac"),
+            track("x", None, None, "b.flac"),
+            track("x", None, None, "c.flac"),
+        ];
+        // 按路径排序的主键恒等，全靠次级顺序决定；降序必须照样翻转。
+        assert_eq!(
+            sorted(
+                tracks,
+                SortOrder {
+                    key: SortKey::Path,
+                    descending: true
+                }
+            ),
+            ["c.flac", "b.flac", "a.flac"]
+        );
+    }
+
+    #[test]
+    fn duration_sort_puts_unknown_lengths_last() {
+        let mut unknown = track("x", None, None, "unknown.flac");
+        unknown.duration = None;
+        let mut long = track("x", None, None, "long.flac");
+        long.duration = Some(Duration::from_secs(600));
+        let tracks = vec![unknown, long, track("x", None, None, "short.flac")];
+        assert_eq!(
+            sorted(
+                tracks,
+                SortOrder {
+                    key: SortKey::Duration,
+                    descending: false
+                }
+            ),
+            ["short.flac", "long.flac", "unknown.flac"]
+        );
     }
 }

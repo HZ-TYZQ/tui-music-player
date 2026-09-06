@@ -189,11 +189,18 @@ impl From<rusqlite::Error> for DatabaseInitError {
     }
 }
 
+const CACHE_VERSION: i64 = 2;
+
 fn initialize_database(path: &Path) -> Result<Connection, DatabaseInitError> {
     let connection = Connection::open(path)?;
     let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if !matches!(version, 0 | 1) {
+    if version > CACHE_VERSION {
         return Err(DatabaseInitError::UnsupportedVersion(version));
+    }
+    if version == 1 {
+        // v1 没有音轨号和碟号，且增量扫描只在文件变动时重读标签，
+        // 保留旧行会让专辑排序永远缺号；索引本就是可重建缓存，直接丢弃重扫。
+        connection.execute_batch("DROP TABLE IF EXISTS tracks;")?;
     }
     connection.execute_batch(
         "PRAGMA journal_mode = WAL;
@@ -207,12 +214,14 @@ fn initialize_database(path: &Path) -> Result<Connection, DatabaseInitError> {
                  album TEXT,
                  duration_ns INTEGER,
                  format TEXT,
+                 track_number INTEGER,
+                 disc_number INTEGER,
                  file_size INTEGER NOT NULL,
                  modified_ns INTEGER NOT NULL,
                  last_seen INTEGER NOT NULL
              );
              CREATE INDEX IF NOT EXISTS tracks_root ON tracks(root);
-             PRAGMA user_version = 1;",
+             PRAGMA user_version = 2;",
     )?;
     Ok(connection)
 }
@@ -303,7 +312,7 @@ fn load_cached(connection: &Connection, root: &str) -> Result<HashMap<String, Tr
     let mut statement = connection
         .prepare(
             "SELECT path, relative_path, title, artist, album, duration_ns, format,
-                    file_size, modified_ns
+                    track_number, disc_number, file_size, modified_ns
              FROM tracks WHERE root = ?1",
         )
         .map_err(|error| format!("无法读取音乐索引: {error}"))?;
@@ -311,7 +320,7 @@ fn load_cached(connection: &Connection, root: &str) -> Result<HashMap<String, Tr
         .query_map([root], |row| {
             let path: String = row.get(0)?;
             let duration_ns: Option<i64> = row.get(5)?;
-            let file_size: i64 = row.get(7)?;
+            let file_size: i64 = row.get(9)?;
             let track = Track {
                 path: PathBuf::from(&path),
                 relative_path: PathBuf::from(row.get::<_, String>(1)?),
@@ -320,8 +329,14 @@ fn load_cached(connection: &Connection, root: &str) -> Result<HashMap<String, Tr
                 album: row.get(4)?,
                 duration: duration_ns.map(|value| Duration::from_nanos(value.max(0) as u64)),
                 format: row.get(6)?,
+                track_number: row
+                    .get::<_, Option<i64>>(7)?
+                    .map(|value| value.max(0) as u32),
+                disc_number: row
+                    .get::<_, Option<i64>>(8)?
+                    .map(|value| value.max(0) as u32),
                 file_size: file_size.max(0) as u64,
-                modified_ns: row.get(8)?,
+                modified_ns: row.get(10)?,
             };
             Ok((path, track))
         })
@@ -344,8 +359,8 @@ fn upsert_track(
         .execute(
             "INSERT INTO tracks (
                  path, root, relative_path, title, artist, album, duration_ns, format,
-                 file_size, modified_ns, last_seen
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 track_number, disc_number, file_size, modified_ns, last_seen
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
              ON CONFLICT(path) DO UPDATE SET
                  root = excluded.root,
                  relative_path = excluded.relative_path,
@@ -354,6 +369,8 @@ fn upsert_track(
                  album = excluded.album,
                  duration_ns = excluded.duration_ns,
                  format = excluded.format,
+                 track_number = excluded.track_number,
+                 disc_number = excluded.disc_number,
                  file_size = excluded.file_size,
                  modified_ns = excluded.modified_ns,
                  last_seen = excluded.last_seen",
@@ -366,6 +383,8 @@ fn upsert_track(
                 track.album,
                 duration_ns,
                 track.format,
+                track.track_number,
+                track.disc_number,
                 track.file_size.min(i64::MAX as u64) as i64,
                 track.modified_ns,
                 scan_id,
@@ -404,6 +423,8 @@ fn discover_track(
     });
     let artist = tag.and_then(non_empty_artist);
     let album = tag.and_then(non_empty_album);
+    let track_number = tag.and_then(Accessor::track);
+    let disc_number = tag.and_then(Accessor::disk);
     let format = path
         .extension()
         .and_then(|extension| extension.to_str())
@@ -417,6 +438,8 @@ fn discover_track(
         album,
         duration: Some(tagged.properties().duration()),
         format,
+        track_number,
+        disc_number,
         file_size,
         modified_ns,
     })
@@ -588,6 +611,8 @@ mod tests {
             album: None,
             duration: Some(Duration::from_secs(42)),
             format: Some("FLAC".to_owned()),
+            track_number: Some(3),
+            disc_number: Some(1),
             file_size: 123,
             modified_ns: 456,
         };
@@ -625,6 +650,41 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, CACHE_VERSION);
+    }
+
+    #[test]
+    fn v1_cache_is_upgraded_in_place_and_reindexed() {
+        let temp = tempfile::tempdir().unwrap();
+        let database = temp.path().join("library.sqlite3");
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE tracks (path TEXT PRIMARY KEY NOT NULL, root TEXT NOT NULL);
+                 PRAGMA user_version = 1;",
+            )
+            .unwrap();
+        connection
+            .execute("INSERT INTO tracks (path, root) VALUES ('/a.mp3', '/')", [])
+            .unwrap();
+        drop(connection);
+
+        // 升级是静默的：不报损坏、不留备份文件，只是丢弃缓存行等待重扫。
+        let (connection, warning) = open_database(&database).unwrap();
+        assert!(warning.is_none());
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CACHE_VERSION);
+        let rows: i64 = connection
+            .query_row("SELECT count(*) FROM tracks", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 0);
+        let backups = fs::read_dir(temp.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains("corrupt"))
+            .count();
+        assert_eq!(backups, 0);
     }
 }
