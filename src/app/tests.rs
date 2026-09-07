@@ -664,6 +664,31 @@ fn short_reason_drops_the_path_from_every_player_error_shape() {
     }
 }
 
+/// 播放器内部要 canonicalize 才能打开文件，但那个路径不能当成曲目的身份：
+/// Windows 上它带 \\?\ 前缀，Linux 上软链接的库根目录会被展开，两种情况都会
+/// 让重扫或重排之后按路径找不回正在播放的曲目。这里用软链接复现后者。
+#[cfg(unix)]
+#[test]
+fn a_rescan_keeps_the_playing_track_when_the_library_path_is_not_canonical() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let real = temp.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    write_test_wav(&real.join("a.wav"));
+    let link = temp.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let path = link.join("a.wav");
+    assert_ne!(path, path.canonicalize().unwrap());
+    app.tracks = vec![track(path.clone())];
+    app.search.replace_tracks(&app.tracks);
+    app.play_index(0, false, BagUpdate::Reanchor).unwrap();
+    assert_eq!(app.player.current_path(), Some(path.as_path()));
+
+    app.replace_tracks(vec![track(path)]);
+
+    assert_eq!(app.playing_index, Some(0));
+}
+
 fn titled_track(path: PathBuf, title: &str) -> Track {
     let mut item = track(path);
     item.title = title.to_owned();

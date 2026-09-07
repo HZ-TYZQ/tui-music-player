@@ -244,7 +244,10 @@ impl Player {
             self.backend.pause();
         }
         self.state = target;
-        self.current_path = Some(absolute);
+        // 记录调用方交来的路径，而不是 canonicalize 之后的那个：规范化只是打开
+        // 文件的手段。Windows 上它会带 \\?\ 前缀，Linux 上会展开软链接根目录，
+        // 两种情况都会让上层按路径找不回正在播放的曲目。
+        self.current_path = Some(path.to_path_buf());
         self.current_duration = duration;
         self.set_forced_position(Duration::ZERO);
         self.is_playing
