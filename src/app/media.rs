@@ -39,6 +39,9 @@ impl App {
     }
 
     pub(super) fn seek_rel_micros(&mut self, offset: i64) {
+        if self.output_blocks_playback() {
+            return;
+        }
         if self.player.state() == PlayState::Stopped {
             return;
         }
@@ -72,6 +75,9 @@ impl App {
     }
 
     fn seek_to_requested(&mut self, position: Duration, track_id: Option<&str>) {
+        if self.output_blocks_playback() {
+            return;
+        }
         if self.player.state() == PlayState::Stopped {
             return;
         }

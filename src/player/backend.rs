@@ -30,7 +30,8 @@ enum InternalEvent {
         /// `Player::position()`：队列此时已切到后续静音源，`get_pos()` 常为 0。
         position: Duration,
     },
-    DeviceError(String),
+    DeviceError(rodio::cpal::StreamError),
+    RecoveryError(String),
 }
 
 enum Output {
@@ -59,7 +60,13 @@ pub struct Player {
     is_playing: AtomicBool,
     pcm_slot: Arc<Mutex<Option<PcmBatch>>>,
     force_position: Mutex<Option<Duration>>,
+    // 恢复时先 seek 解码器，Rodio 的计时从接入时的 0 开始。
+    // 后续正常 seek 会把 Rodio 的计时设为绝对位置，此时清除偏移。
+    position_offset: Mutex<Duration>,
     _spectrum: SpectrumWorker,
+    output_fault: Option<Duration>,
+    recovery: Option<Receiver<Result<Box<Player>, String>>>,
+    underrun_reported: bool,
 }
 
 impl Player {
@@ -69,7 +76,7 @@ impl Player {
         let mut sink = DeviceSinkBuilder::from_default_device()
             .map_err(|error| format!("无法打开默认音频输出设备: {error}"))?
             .with_error_callback(move |error| {
-                let _ = error_tx.send(InternalEvent::DeviceError(error.to_string()));
+                let _ = error_tx.send(InternalEvent::DeviceError(error));
             })
             .open_stream()
             .map_err(|error| format!("无法打开音频输出流: {error}"))?;
@@ -155,7 +162,11 @@ impl Player {
             is_playing: AtomicBool::new(false),
             pcm_slot,
             force_position: Mutex::new(None),
+            position_offset: Mutex::new(Duration::ZERO),
             _spectrum: spectrum,
+            output_fault: None,
+            recovery: None,
+            underrun_reported: false,
         }
     }
 
@@ -178,6 +189,18 @@ impl Player {
     }
 
     fn load(&mut self, path: &Path, target: PlayState) -> Result<(), String> {
+        self.load_at(path, target, Duration::ZERO)
+    }
+
+    fn load_at(
+        &mut self,
+        path: &Path,
+        target: PlayState,
+        position: Duration,
+    ) -> Result<(), String> {
+        if self.output_unavailable() {
+            return Err("音频输出中断，请按空格重试".to_owned());
+        }
         if !matches!(target, PlayState::Playing | PlayState::Paused) {
             return Err("内部错误: load 只能进入 Playing 或 Paused".to_owned());
         }
@@ -209,10 +232,21 @@ impl Player {
         {
             builder = builder.with_hint(extension);
         }
-        let decoder = builder
+        let mut decoder = builder
             .build()
             .map_err(|error| format!("无法识别或解码 {}: {error}", absolute.display()))?;
         let duration = decoder.total_duration();
+        // 在接入音频线程之前恢复位置，失败时不出声，也不退回曲首。
+        if !position.is_zero() {
+            decoder
+                .try_seek(position)
+                .map_err(|error| format!("无法恢复播放位置: {error}"))?;
+        }
+        let initial_samples = duration_to_samples(
+            position,
+            u64::from(decoder.channels().get()),
+            u64::from(decoder.sample_rate().get()),
+        );
 
         if target == PlayState::Paused {
             self.backend.pause();
@@ -233,7 +267,7 @@ impl Player {
             inner: tap,
             generation,
             events: self.event_tx.clone(),
-            samples: 0,
+            samples: initial_samples,
             signaled: false,
         });
 
@@ -249,7 +283,8 @@ impl Player {
         // 两种情况都会让上层按路径找不回正在播放的曲目。
         self.current_path = Some(path.to_path_buf());
         self.current_duration = duration;
-        self.set_forced_position(Duration::ZERO);
+        *self.position_offset.lock().unwrap() = position;
+        self.set_forced_position(position);
         self.is_playing
             .store(target == PlayState::Playing, Ordering::Relaxed);
         self.refresh_spectrum_live();
@@ -257,6 +292,8 @@ impl Player {
     }
 
     pub fn pause(&mut self) {
+        // 恢复期间收到 Pause，取消本次恢复；后台创建的播放器始终保持暂停。
+        self.recovery = None;
         if self.state == PlayState::Playing {
             self.backend.pause();
             self.state = PlayState::Paused;
@@ -266,6 +303,10 @@ impl Player {
     }
 
     pub fn resume(&mut self) {
+        if self.output_unavailable() {
+            self.start_recovery();
+            return;
+        }
         if self.state == PlayState::Paused {
             self.backend.play();
             self.state = PlayState::Playing;
@@ -283,18 +324,26 @@ impl Player {
     }
 
     pub fn stop(&mut self) {
+        self.recovery = None;
+        if self.output_fault.is_some() {
+            self.output_fault = Some(Duration::ZERO);
+        }
         let _ = self.advance_generation();
         self.backend.stop();
         self.state = PlayState::Stopped;
         self.current_path = None;
         self.current_duration = None;
+        *self.position_offset.lock().unwrap() = Duration::ZERO;
         self.set_forced_position(Duration::ZERO);
         self.is_playing.store(false, Ordering::Relaxed);
         self.refresh_spectrum_live();
     }
 
     pub fn position(&self) -> Duration {
-        let backend = self.backend.get_pos();
+        if let Some(position) = self.output_fault {
+            return position;
+        }
+        let backend = self.backend.get_pos() + *self.position_offset.lock().unwrap();
         let mut forced = self
             .force_position
             .lock()
@@ -315,11 +364,12 @@ impl Player {
     }
 
     pub fn seek_to(&self, pos: Duration) -> bool {
-        if self.state == PlayState::Stopped {
+        if self.state == PlayState::Stopped || self.output_unavailable() {
             return false;
         }
         let target = clamp_seek_target(pos, self.current_duration);
         if self.backend.try_seek(target).is_ok() {
+            *self.position_offset.lock().unwrap() = Duration::ZERO;
             self.set_forced_position(target);
             true
         } else {
@@ -370,16 +420,93 @@ impl Player {
         self.refresh_spectrum_live();
     }
 
+    pub fn output_unavailable(&self) -> bool {
+        self.output_fault.is_some()
+    }
+
+    fn start_recovery(&mut self) {
+        if self.recovery.is_some() {
+            return;
+        }
+        let position = self.output_fault.unwrap_or_default();
+        let path = self.current_path.clone();
+        let (tx, rx) = mpsc::channel();
+        // 新播放器拥有独立事件通道，旧输出流迟到的回调不会影响恢复后的播放。
+        let result = thread::Builder::new()
+            .name("audio-recovery".to_owned())
+            .spawn(move || {
+                let result = (|| {
+                    let mut player = Self::new()?;
+                    if let Some(path) = path {
+                        player.load_at(&path, PlayState::Paused, position)?;
+                    }
+                    player.drain_events();
+                    if player.output_unavailable() {
+                        return Err("新音频输出流不可用".to_owned());
+                    }
+                    Ok(Box::new(player))
+                })();
+                let _ = tx.send(result);
+            });
+        match result {
+            Ok(_) => self.recovery = Some(rx),
+            Err(error) => {
+                let _ = self
+                    .event_tx
+                    .send(InternalEvent::RecoveryError(error.to_string()));
+            }
+        }
+    }
+
     pub fn drain_events(&mut self) -> Vec<PlayerEvent> {
+        if let Some(recovery) = &self.recovery {
+            match recovery.try_recv() {
+                Ok(Ok(mut player)) => {
+                    player.set_volume(self.volume());
+                    player.set_muted(self.is_muted());
+                    player.set_spectrum_enabled(self.spectrum_enabled.load(Ordering::Relaxed));
+                    player.resume();
+                    *self = *player;
+                    return vec![PlayerEvent::OutputRecovered];
+                }
+                Ok(Err(error)) => {
+                    self.recovery = None;
+                    return vec![PlayerEvent::OutputError(format!("恢复失败: {error}"))];
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.recovery = None;
+                    return vec![PlayerEvent::OutputError("恢复音频输出失败".to_owned())];
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        let events: Vec<_> = self.events.try_iter().collect();
+        // 同一批事件中设备故障优先，避免先处理曲尾而意外推进队列。
+        if !self.output_unavailable()
+            && let Some(message) = events.iter().find_map(|event| match event {
+                InternalEvent::DeviceError(rodio::cpal::StreamError::BufferUnderrun) => None,
+                InternalEvent::DeviceError(error) => Some(error.to_string()),
+                _ => None,
+            })
+        {
+            let position = self.position();
+            self.backend.pause();
+            self.output_fault = Some(position);
+            self.state = PlayState::Paused;
+            self.is_playing.store(false, Ordering::Relaxed);
+            self.refresh_spectrum_live();
+            self.advance_generation();
+            return vec![PlayerEvent::OutputError(message)];
+        }
         let current = self.generation.load(Ordering::Relaxed);
         let mut drained = Vec::new();
-        while let Ok(event) = self.events.try_recv() {
+        for event in events {
             match event {
                 InternalEvent::SourceEnded {
                     generation,
                     position,
                 } => {
-                    if generation != current {
+                    if generation != current || self.output_unavailable() {
                         continue;
                     }
                     let kind = classify_source_end(position, self.current_duration);
@@ -391,9 +518,17 @@ impl Player {
                         }
                     });
                 }
-                InternalEvent::DeviceError(message) => {
-                    self.mark_stopped();
-                    drained.push(PlayerEvent::Error(message));
+                InternalEvent::DeviceError(rodio::cpal::StreamError::BufferUnderrun)
+                    if !self.output_unavailable() && !self.underrun_reported =>
+                {
+                    self.underrun_reported = true;
+                    drained.push(PlayerEvent::OutputWarning(
+                        "音频缓冲不足，可能短暂卡顿".to_owned(),
+                    ));
+                }
+                InternalEvent::DeviceError(_) => {}
+                InternalEvent::RecoveryError(error) => {
+                    drained.push(PlayerEvent::OutputError(error))
                 }
             }
         }

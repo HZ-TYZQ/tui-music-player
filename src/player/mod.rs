@@ -14,6 +14,9 @@ pub enum PlayState {
 pub enum PlayerEvent {
     EndOfStream,
     Error(String),
+    OutputError(String),
+    OutputWarning(String),
+    OutputRecovered,
     StateChanged(PlayState),
     SpectrumFrame {
         magnitudes: Vec<f32>,

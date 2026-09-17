@@ -213,6 +213,14 @@ impl App {
         for event in self.player.drain_events() {
             match event {
                 PlayerEvent::EndOfStream => self.play_next(true),
+                PlayerEvent::OutputError(error) => {
+                    self.spectrum.reset_output();
+                    self.message = Some(format!("音频输出中断，已保留进度；按空格重试：{error}"));
+                }
+                PlayerEvent::OutputWarning(message) => self.message = Some(message),
+                PlayerEvent::OutputRecovered => {
+                    self.message = Some("音频输出已恢复".to_owned());
+                }
                 PlayerEvent::Error(error) => {
                     let name = self
                         .current_track()

@@ -49,7 +49,18 @@ fn file_label(path: &Path) -> String {
 }
 
 impl App {
+    pub(super) fn output_blocks_playback(&mut self) -> bool {
+        if !self.player.output_unavailable() {
+            return false;
+        }
+        self.message = Some("音频输出中断，已保留进度；按空格重试".to_owned());
+        true
+    }
+
     pub(super) fn play_selected(&mut self) {
+        if self.output_blocks_playback() {
+            return;
+        }
         if let Some(index) = self.selected_track_index()
             && let Err(skip) = self.play_index(index, true, BagUpdate::Reanchor)
         {
@@ -128,6 +139,9 @@ impl App {
     /// `skipped` 让调用方带入这一轮已经发生的失败（例如播放途中解码出错），
     /// 与后续自动跳过合并成同一条提示，而不是被下一次成功切歌清掉。
     pub(super) fn advance(&mut self, natural_end: bool, mut skipped: Vec<Skip>) {
+        if self.output_blocks_playback() {
+            return;
+        }
         if self.tracks.is_empty() {
             self.playing_index = None;
             self.report_skipped(&skipped);
@@ -277,6 +291,9 @@ impl App {
     }
 
     pub(super) fn play_previous(&mut self) {
+        if self.output_blocks_playback() {
+            return;
+        }
         let mut skipped = Vec::new();
         while let Some(path) = self.history.pop() {
             match self.play_path(&path, false, BagUpdate::Reanchor) {
@@ -354,12 +371,16 @@ impl App {
     pub(super) fn toggle_or_start(&mut self) {
         match self.player.state() {
             PlayState::Playing => self.player.pause(),
-            PlayState::Paused => self.player.resume(),
-            PlayState::Stopped => self.play_or_resume(),
+            PlayState::Paused | PlayState::Stopped => self.play_or_resume(),
         }
     }
 
     pub(super) fn play_or_resume(&mut self) {
+        if self.player.output_unavailable() {
+            self.player.resume();
+            self.message = Some("正在恢复音频输出…".to_owned());
+            return;
+        }
         match self.player.state() {
             PlayState::Playing => {}
             PlayState::Paused => self.player.resume(),
