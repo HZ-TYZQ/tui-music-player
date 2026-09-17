@@ -11,8 +11,9 @@ use crate::track::Track;
 use super::ListView;
 use super::text::{column_text, fmt_duration};
 
-pub(super) const PAUSE_ACTION_ICON: &str = "|| ";
-pub(super) const PLAY_ACTION_ICON: &str = ">  ";
+// 暂停符号显式请求文本字形，两个操作符号都保留三列的图标区域。
+pub(super) const PAUSE_ACTION_ICON: &str = "⏸\u{fe0e}  ";
+pub(super) const PLAY_ACTION_ICON: &str = "⏵  ";
 pub(super) const STOPPED_ICON: &str = "■  ";
 pub(super) const INACTIVE_ICON: &str = "   ";
 pub(super) const LIST_ICON_WIDTH: usize = 3;

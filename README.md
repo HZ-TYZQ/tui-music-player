@@ -109,7 +109,7 @@ Linux 没有显式设置 XDG 基础目录时，通常对应 `~/.config`、`~/.lo
 
 支持的音频格式：MP3、FLAC、WAV、OGG/OGA Vorbis、M4A/AAC、AAC ADTS、AIFF。Opus 暂缓支持；APE 与 WMA 不再支持。
 
-播放区域的图标表示按下 `Space` 后将执行的操作：播放中显示文本样式的 `||`，暂停时显示文本样式的 `> `，替换Unicode字符提升Windows Terminal兼容性。
+播放区域的图标表示按下 `Space` 后将执行的操作：播放中显示 `⏸︎`，暂停时显示 `⏵`。暂停符号附带文本样式选择符，实际字形由终端和字体决定。
 
 ## 测试、RPM 与 Windows 发行包
 
