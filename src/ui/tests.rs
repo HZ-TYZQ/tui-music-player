@@ -73,14 +73,11 @@ fn playback_icon_describes_the_space_key_action() {
 fn playback_icons_have_fixed_display_width() {
     for state in [PlayState::Playing, PlayState::Paused, PlayState::Stopped] {
         assert_eq!(
-            playback_action_indicator(state, &DEFAULT_THEME)
-                .0
-                .chars()
-                .count(),
-            3
+            UnicodeWidthStr::width(playback_action_indicator(state, &DEFAULT_THEME).0),
+            LIST_ICON_WIDTH
         );
     }
-    assert_eq!(INACTIVE_ICON.chars().count(), 3);
+    assert_eq!(UnicodeWidthStr::width(INACTIVE_ICON), LIST_ICON_WIDTH);
 }
 
 #[test]
