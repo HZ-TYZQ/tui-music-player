@@ -1,5 +1,5 @@
 Name:           music-player
-Version:        1.3.0
+Version:        1.3.1
 Release:        1%{?dist}
 Summary:        Terminal music library player
 
@@ -56,6 +56,10 @@ install -Dpm 0644 assets/icons/%{name}-48.png %{buildroot}%{_datadir}/icons/hico
 %{_datadir}/icons/hicolor/48x48/apps/%{name}.png
 
 %changelog
+* Fri Sep 18 2026 HZ-TYZQ - 1.3.1-1
+- Preserve playback on audio output failure and allow manual recovery
+- Refresh playback action symbols
+
 * Sun Sep 07 2026 HZ-TYZQ - 1.3.0-1
 - Add a play queue panel with jump-to, remove, reorder and clear
 - Sort the library by path, title, artist, album or duration in either direction
