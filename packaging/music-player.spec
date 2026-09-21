@@ -1,5 +1,5 @@
 Name:           music-player
-Version:        1.3.1
+Version:        1.3.2
 Release:        1%{?dist}
 Summary:        Terminal music library player
 
@@ -56,6 +56,12 @@ install -Dpm 0644 assets/icons/%{name}-48.png %{buildroot}%{_datadir}/icons/hico
 %{_datadir}/icons/hicolor/48x48/apps/%{name}.png
 
 %changelog
+* Mon Sep 21 2026 HZ-TYZQ - 1.3.2-1
+- Add synchronized LRC lyrics from sidecar files or embedded tags,
+  decoding UTF-8, UTF-16 and GBK
+- Resume the last track paused at its saved position on startup
+- Add 60-second seek, percentage jump and 1% volume keys
+
 * Fri Sep 18 2026 HZ-TYZQ - 1.3.1-1
 - Preserve playback on audio output failure and allow manual recovery
 - Refresh playback action symbols
