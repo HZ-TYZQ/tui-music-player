@@ -47,7 +47,7 @@ Permissive playback and metadata
   https://github.com/ejmahler/RustFFT
 - percent-encoding 2.3.2 (Linux) — MIT OR Apache-2.0
   https://github.com/servo/rust-url/tree/main/percent_encoding
-- encoding_rs 0.8.35 (via lofty / symphonia) —
+- encoding_rs 0.8.35 (lyrics decoding; also via lofty / symphonia) —
   (Apache-2.0 OR MIT) AND BSD-3-Clause
   https://github.com/hsivonen/encoding_rs
   BSD-3-Clause copyright: Copyright (c) 2016-2017 Mozilla Foundation

@@ -1424,6 +1424,7 @@ dependencies = [
  "clap",
  "crossterm",
  "dirs",
+ "encoding_rs",
  "lofty",
  "mpris-server",
  "nucleo",

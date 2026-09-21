@@ -1,9 +1,11 @@
 //! LRC 同步歌词：解析、按播放位置定位当前行，以及从同名 `.lrc` 或内嵌标签读取。
 
+use std::borrow::Cow;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use encoding_rs::{Encoding, GB18030};
 use lofty::file::TaggedFileExt;
 use lofty::probe::Probe;
 use lofty::tag::ItemKey;
@@ -83,7 +85,7 @@ impl Lyrics {
                 .map_err(|error| format!("无法读取歌词 {}: {error}", file_label(&path)))?;
             let text = decode(&bytes).ok_or_else(|| {
                 format!(
-                    "歌词 {} 不是 UTF-8 或 UTF-16 编码，已忽略",
+                    "歌词 {} 无法按 UTF-8、UTF-16 或 GBK 解码，已忽略",
                     file_label(&path)
                 )
             })?;
@@ -150,26 +152,20 @@ fn sidecar_path(track: &Path) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
+/// 有 BOM 按 BOM（UTF-8 / UTF-16）；没有 BOM 先按 UTF-8，不合法再按 GB18030。
+/// GB18030 是 GBK 的超集，覆盖了中文 `.lrc` 最常见的非 UTF-8 编码。
 fn decode(bytes: &[u8]) -> Option<String> {
-    if let Some(rest) = bytes.strip_prefix(b"\xEF\xBB\xBF") {
-        return String::from_utf8(rest.to_vec()).ok();
+    if let Some((encoding, bom_length)) = Encoding::for_bom(bytes) {
+        return encoding
+            .decode_without_bom_handling_and_without_replacement(&bytes[bom_length..])
+            .map(Cow::into_owned);
     }
-    let utf16 = |rest: &[u8], from: fn([u8; 2]) -> u16| {
-        let units: Vec<u16> = rest
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|pair| from(*pair))
-            .collect();
-        String::from_utf16(&units).ok()
-    };
-    if let Some(rest) = bytes.strip_prefix(b"\xFF\xFE") {
-        return utf16(rest, u16::from_le_bytes);
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return Some(text.to_owned());
     }
-    if let Some(rest) = bytes.strip_prefix(b"\xFE\xFF") {
-        return utf16(rest, u16::from_be_bytes);
-    }
-    String::from_utf8(bytes.to_vec()).ok()
+    GB18030
+        .decode_without_bom_handling_and_without_replacement(bytes)
+        .map(Cow::into_owned)
 }
 
 /// 内嵌歌词常以 LRC 文本放在 LYRICS / USLT / ©lyr 里；纯文本歌词没有时间，不予显示。
@@ -277,8 +273,25 @@ mod tests {
         let lyrics = Lyrics::load_for(&track).unwrap().unwrap();
         assert_eq!(lyrics.lines()[0].text, "宽字符");
 
-        // GBK 的“你好”：不是合法 UTF-8。
-        fs::write(temp.path().join("歌.lrc"), b"[00:01.00]\xC4\xE3\xBA\xC3\n").unwrap();
-        assert!(Lyrics::load_for(&track).unwrap_err().contains("不是 UTF-8"));
+        let mut utf16_be = b"\xFE\xFF".to_vec();
+        for unit in "[00:03.00]大端\n".encode_utf16() {
+            utf16_be.extend_from_slice(&unit.to_be_bytes());
+        }
+        fs::write(temp.path().join("歌.lrc"), &utf16_be).unwrap();
+        let lyrics = Lyrics::load_for(&track).unwrap().unwrap();
+        assert_eq!(lyrics.lines()[0].text, "大端");
+
+        // GBK 的“你好，世界”：不是合法 UTF-8，按 GB18030 解出。
+        fs::write(
+            temp.path().join("歌.lrc"),
+            b"[ti:\xB2\xE2\xCA\xD4]\n[00:01.00]\xC4\xE3\xBA\xC3\xA3\xAC\xCA\xC0\xBD\xE7\n",
+        )
+        .unwrap();
+        let lyrics = Lyrics::load_for(&track).unwrap().unwrap();
+        assert_eq!(lyrics.lines()[0].text, "你好，世界");
+
+        // 0xFF 在 UTF-8 和 GB18030 里都不合法。
+        fs::write(temp.path().join("歌.lrc"), b"[00:01.00]\xFF\n").unwrap();
+        assert!(Lyrics::load_for(&track).unwrap_err().contains("无法按"));
     }
 }
