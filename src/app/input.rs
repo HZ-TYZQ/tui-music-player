@@ -1,8 +1,11 @@
 //! 键盘输入、搜索编辑和曲库光标。
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{App, Overlay};
+
+const SHORT_SEEK_MICROS: i64 = 10_000_000;
+const LONG_SEEK_MICROS: i64 = 60_000_000;
 
 impl App {
     pub fn handle_key(&mut self, key: KeyEvent) {
@@ -14,16 +17,27 @@ impl App {
             return;
         }
 
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Down | KeyCode::Char('j') => self.select_next(),
             KeyCode::Up | KeyCode::Char('k') => self.select_previous(),
             KeyCode::Enter => self.play_selected(),
             KeyCode::Char(' ') => self.toggle_or_start(),
-            KeyCode::Left | KeyCode::Char('h') => self.seek_rel_micros(-10_000_000),
-            KeyCode::Right | KeyCode::Char('l') => self.seek_rel_micros(10_000_000),
+            // 部分终端不区分 Shift+方向键，H/L 始终可用。
+            KeyCode::Left if shift => self.seek_rel_micros(-LONG_SEEK_MICROS),
+            KeyCode::Right if shift => self.seek_rel_micros(LONG_SEEK_MICROS),
+            KeyCode::Char('H') => self.seek_rel_micros(-LONG_SEEK_MICROS),
+            KeyCode::Char('L') => self.seek_rel_micros(LONG_SEEK_MICROS),
+            KeyCode::Left | KeyCode::Char('h') => self.seek_rel_micros(-SHORT_SEEK_MICROS),
+            KeyCode::Right | KeyCode::Char('l') => self.seek_rel_micros(SHORT_SEEK_MICROS),
+            KeyCode::Char(digit @ '0'..='9') => {
+                self.seek_to_ratio(f64::from(digit as u8 - b'0') / 10.0);
+            }
             KeyCode::Char('-') => self.change_volume(-5),
             KeyCode::Char('=') | KeyCode::Char('+') => self.change_volume(5),
+            KeyCode::Char('[') => self.change_volume(-1),
+            KeyCode::Char(']') => self.change_volume(1),
             KeyCode::Char('m') => self.toggle_mute(),
             KeyCode::Char('M') => self.toggle_mouse(),
             KeyCode::Char('n') => self.play_next(false),

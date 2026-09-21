@@ -913,6 +913,80 @@ fn clicking_the_progress_bar_seeks_within_the_current_track() {
 }
 
 #[test]
+fn digit_keys_jump_to_tenths_of_the_track() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let long = temp.path().join("music").join("long.wav");
+    write_long_test_wav(&long);
+    let mut item = track(long.clone());
+    item.duration = Some(Duration::from_secs(100));
+    app.tracks = vec![item];
+    app.search.replace_tracks(&app.tracks);
+    app.play_index(0, false, BagUpdate::Reanchor).unwrap();
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE));
+    let position = app.player.position();
+    assert!(
+        position >= Duration::from_secs(45) && position <= Duration::from_secs(55),
+        "按 5 后位置是 {position:?}"
+    );
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE));
+    assert!(app.player.position() < Duration::from_secs(5));
+}
+
+#[test]
+fn long_seek_moves_a_minute_with_shift_arrows_or_uppercase_keys() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let long = temp.path().join("music").join("long.wav");
+    write_long_test_wav(&long);
+    let mut item = track(long.clone());
+    item.duration = Some(Duration::from_secs(100));
+    app.tracks = vec![item];
+    app.search.replace_tracks(&app.tracks);
+    app.play_index(0, false, BagUpdate::Reanchor).unwrap();
+
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
+    let position = app.player.position();
+    assert!(
+        position >= Duration::from_secs(60) && position <= Duration::from_secs(65),
+        "Shift+→ 后位置是 {position:?}"
+    );
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('H'), KeyModifiers::SHIFT));
+    assert!(app.player.position() < Duration::from_secs(5));
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT));
+    let position = app.player.position();
+    assert!(
+        position >= Duration::from_secs(60) && position <= Duration::from_secs(65),
+        "L 后位置是 {position:?}"
+    );
+
+    // 普通方向键仍是 10 秒。
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    let position = app.player.position();
+    assert!(
+        position >= Duration::from_secs(50) && position <= Duration::from_secs(55),
+        "← 后位置是 {position:?}"
+    );
+}
+
+#[test]
+fn bracket_keys_adjust_volume_by_one_percent() {
+    let (_temp, mut app) = test_app(AppConfig {
+        volume: 50,
+        ..AppConfig::default()
+    });
+
+    app.handle_key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+    assert_eq!(app.player.volume(), 51);
+    app.handle_key(KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE));
+    assert_eq!(app.player.volume(), 49);
+    assert_eq!(app.config.volume, 49);
+}
+
+#[test]
 fn the_wheel_moves_the_selection_inside_the_hovered_list() {
     let (_temp, mut app) = test_app(AppConfig::default());
     app.tracks = (0..20)

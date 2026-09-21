@@ -26,13 +26,15 @@ pub(super) fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme, view: &m
         Overlay::None => {}
         Overlay::Help => draw_text_popup(
             frame,
-            " 快捷键帮助 ",
+            " 快捷键帮助 · ? / Esc 关闭 ",
             vec![
                 "↑/↓ 或 j/k    选择歌曲",
                 "Enter          立即播放（保留队列）",
                 "Space          暂停 / 继续",
                 "←/→ 或 h/l    后退 / 前进 10 秒",
-                "- / =          音量降低 / 提高 5%",
+                "H/L、Shift+←/→ 后退 / 前进 60 秒",
+                "0–9            跳到 0% – 90% 位置",
+                "- / = · [ / ]  音量 ±5% / ±1%",
                 "m              静音",
                 "n / p          下一首 / 上一首历史",
                 "z              循环方式：顺序 / 列表 / 单曲",
@@ -45,7 +47,6 @@ pub(super) fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme, view: &m
                 "a / A          加到队尾 / 设为下一首",
                 "Q              播放队列",
                 "P              播放列表",
-                "? / Esc        关闭帮助",
                 "q              退出",
             ],
             62,
