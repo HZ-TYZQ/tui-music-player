@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::config::{AppConfig, AppPaths};
+use crate::player::PlayState;
 use crate::track::{RepeatMode, SortKey, Track};
 
 use crate::ui::ViewLayout;
@@ -13,16 +14,21 @@ use super::{App, BagUpdate, Overlay};
 
 fn test_app(config: AppConfig) -> (tempfile::TempDir, App) {
     let temp = tempfile::tempdir().unwrap();
-    let music = temp.path().join("music");
-    std::fs::create_dir(&music).unwrap();
+    std::fs::create_dir(temp.path().join("music")).unwrap();
+    let app = app_in(temp.path(), "music", config);
+    (temp, app)
+}
+
+/// 在已有的临时目录上再开一个 App，模拟退出后重新启动。
+fn app_in(root: &Path, library: &str, config: AppConfig) -> App {
+    let music = root.join(library);
     let paths = AppPaths::from_roots(
-        temp.path().join("config"),
-        temp.path().join("data"),
-        temp.path().join("cache"),
+        root.join("config"),
+        root.join("data"),
+        root.join("cache"),
         Some(music.clone()),
     );
-    let app = App::new_for_tests(music, paths, config, None, false).unwrap();
-    (temp, app)
+    App::new_for_tests(music, paths, config, None, false).unwrap()
 }
 
 fn track(path: PathBuf) -> Track {
@@ -1065,4 +1071,111 @@ fn write_wav(path: &Path, sample_rate: u32, sample_count: usize) {
     wav.extend_from_slice(&data_len.to_le_bytes());
     wav.resize(44 + data_len as usize, 0);
     std::fs::write(path, wav).unwrap();
+}
+
+/// 播放 100 秒的测试曲并停在 `at`，返回曲目路径。
+fn play_long_track_at(temp: &Path, app: &mut App, at: Duration) -> PathBuf {
+    let long = temp.join("music").join("long.wav");
+    write_long_test_wav(&long);
+    let mut item = track(long.clone());
+    item.duration = Some(Duration::from_secs(100));
+    app.tracks = vec![item];
+    app.search.replace_tracks(&app.tracks);
+    app.play_index(0, false, BagUpdate::Reanchor).unwrap();
+    assert!(app.player.seek_to(at));
+    long
+}
+
+fn long_track(path: &Path) -> Track {
+    let mut item = track(path.to_path_buf());
+    item.duration = Some(Duration::from_secs(100));
+    item
+}
+
+#[test]
+fn restart_resumes_the_last_track_paused_at_its_position() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let long = play_long_track_at(temp.path(), &mut app, Duration::from_secs(40));
+    app.save_session().unwrap();
+    drop(app);
+
+    let mut app = app_in(temp.path(), "music", AppConfig::default());
+    let other = temp.path().join("music").join("other.wav");
+    app.apply_scan_finished(vec![track(other), long_track(&long)], Vec::new());
+    settle_search_and_selection(&mut app);
+
+    assert_eq!(app.player.state(), PlayState::Paused);
+    assert_eq!(app.current_track().map(|t| t.path.clone()), Some(long));
+    assert_eq!(app.selected_track_index(), app.playing_index);
+    let position = app.player.position();
+    assert!(
+        position >= Duration::from_secs(39) && position <= Duration::from_secs(41),
+        "恢复后位置是 {position:?}"
+    );
+    assert!(app.message.as_deref().unwrap().contains("已恢复上次播放"));
+
+    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+    assert_eq!(app.player.state(), PlayState::Playing);
+}
+
+#[test]
+fn a_finished_track_resumes_from_the_start() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let long = play_long_track_at(temp.path(), &mut app, Duration::from_secs(99));
+    app.save_session().unwrap();
+    drop(app);
+
+    let mut app = app_in(temp.path(), "music", AppConfig::default());
+    app.apply_scan_finished(vec![long_track(&long)], Vec::new());
+    assert_eq!(app.player.state(), PlayState::Paused);
+    assert!(app.player.position() < Duration::from_secs(1));
+}
+
+#[test]
+fn a_session_from_another_library_is_not_restored() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let long = play_long_track_at(temp.path(), &mut app, Duration::from_secs(40));
+    app.save_session().unwrap();
+    drop(app);
+
+    std::fs::create_dir(temp.path().join("elsewhere")).unwrap();
+    let mut app = app_in(temp.path(), "elsewhere", AppConfig::default());
+    app.apply_scan_finished(vec![long_track(&long)], Vec::new());
+    assert_eq!(app.player.state(), PlayState::Stopped);
+    assert_eq!(app.playing_index, None);
+}
+
+#[test]
+fn quitting_before_the_first_scan_keeps_the_saved_session() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let long = play_long_track_at(temp.path(), &mut app, Duration::from_secs(40));
+    app.save_session().unwrap();
+    drop(app);
+
+    // 第一次扫描还没完成就退出：会话必须原样留给下一次。
+    let app = app_in(temp.path(), "music", AppConfig::default());
+    app.save_session().unwrap();
+    drop(app);
+
+    let mut app = app_in(temp.path(), "music", AppConfig::default());
+    app.apply_scan_finished(vec![long_track(&long)], Vec::new());
+    assert_eq!(app.player.state(), PlayState::Paused);
+}
+
+#[test]
+fn quitting_with_nothing_loaded_clears_the_session() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let long = play_long_track_at(temp.path(), &mut app, Duration::from_secs(40));
+    app.save_session().unwrap();
+    drop(app);
+
+    // 曲目已从曲库消失：恢复落空，退出时什么都没播，旧会话应被清掉。
+    let mut app = app_in(temp.path(), "music", AppConfig::default());
+    app.apply_scan_finished(Vec::new(), Vec::new());
+    app.save_session().unwrap();
+    drop(app);
+
+    let mut app = app_in(temp.path(), "music", AppConfig::default());
+    app.apply_scan_finished(vec![long_track(&long)], Vec::new());
+    assert_eq!(app.player.state(), PlayState::Stopped);
 }

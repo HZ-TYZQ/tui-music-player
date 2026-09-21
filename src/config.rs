@@ -16,6 +16,7 @@ const CONFIG_VERSION: u32 = 1;
 pub struct AppPaths {
     pub config_file: PathBuf,
     pub playlists_dir: PathBuf,
+    pub session_file: PathBuf,
     pub cache_db: PathBuf,
     pub default_music_dir: Option<PathBuf>,
 }
@@ -37,6 +38,7 @@ impl AppPaths {
         Self {
             config_file: config.join(APP_DIR).join("config.toml"),
             playlists_dir: data.join(APP_DIR).join("playlists"),
+            session_file: data.join(APP_DIR).join("session.toml"),
             cache_db: cache.join(APP_DIR).join("library.sqlite3"),
             default_music_dir: music,
         }
@@ -323,6 +325,10 @@ mod tests {
         assert_eq!(
             paths.cache_db,
             PathBuf::from("/cache/tui-music-player/library.sqlite3")
+        );
+        assert_eq!(
+            paths.session_file,
+            PathBuf::from("/data/tui-music-player/session.toml")
         );
         assert_eq!(paths.default_music_dir, Some(PathBuf::from("/music")));
     }

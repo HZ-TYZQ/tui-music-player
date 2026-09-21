@@ -110,6 +110,11 @@ Main library, playback, and visualizer settings.
 .I $XDG_DATA_HOME/tui-music-player/playlists/*.json
 Independent named playlist files.
 .TP
+.I $XDG_DATA_HOME/tui-music-player/session.toml
+Track and position at the last exit. On the next launch with the same library,
+that track is loaded paused at the saved position; press Space to continue.
+Deleting the file only forgets the position.
+.TP
 .I $XDG_CACHE_HOME/tui-music-player/library.sqlite3
 Rebuildable incremental music metadata cache.
 .SH AUTHORS

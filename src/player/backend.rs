@@ -188,6 +188,11 @@ impl Player {
         self.load(path, PlayState::Paused)
     }
 
+    /// 同 `open`，但从指定位置开始，用于恢复上次会话。
+    pub fn open_at(&mut self, path: &Path, position: Duration) -> Result<(), String> {
+        self.load_at(path, PlayState::Paused, position)
+    }
+
     fn load(&mut self, path: &Path, target: PlayState) -> Result<(), String> {
         self.load_at(path, target, Duration::ZERO)
     }

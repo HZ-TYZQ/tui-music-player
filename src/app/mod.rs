@@ -6,6 +6,7 @@ mod mouse;
 mod playback;
 mod playlists;
 mod queue;
+mod session;
 mod sorting;
 
 #[cfg(test)]
@@ -21,6 +22,7 @@ use crate::media::MediaEvent;
 use crate::player::{PlayState, Player, PlayerEvent};
 use crate::playlist::PlaylistStore;
 use crate::search::SearchIndex;
+use crate::session::Session;
 use crate::spectrum::SpectrumProcessor;
 use crate::track::Track;
 
@@ -75,6 +77,8 @@ pub struct App {
     shuffle_order: Vec<usize>,
     shuffle_cursor: usize,
     media_events: Vec<MediaEvent>,
+    /// 上次退出时的曲目与位置，等第一次扫描完成、曲库就绪后再恢复。
+    pending_session: Option<Session>,
     /// 上一次鼠标按下的时刻与位置，仅用于判定双击。
     last_click: Option<(Instant, u16, u16)>,
 }
@@ -130,6 +134,8 @@ impl App {
             .map_err(|error| format!("无法打开播放列表目录: {error}"))?;
         let playlist_warning = playlists.warnings().first().cloned();
         let library = LibraryWorker::start(library_dir.clone(), paths.cache_db.clone());
+        let pending_session =
+            Session::load(&paths.session_file).filter(|session| session.library_dir == library_dir);
         Ok(Self {
             library_dir,
             tracks: Vec::new(),
@@ -164,6 +170,7 @@ impl App {
             shuffle_order: Vec::new(),
             shuffle_cursor: 0,
             media_events: Vec::new(),
+            pending_session,
             last_click: None,
         })
     }
@@ -300,6 +307,7 @@ impl App {
                 warnings.len()
             ))
         };
+        self.restore_session();
     }
 
     pub fn save_settings(&mut self) -> Result<(), String> {

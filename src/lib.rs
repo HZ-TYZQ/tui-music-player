@@ -6,6 +6,7 @@ pub mod media;
 pub mod player;
 pub mod playlist;
 pub mod search;
+pub mod session;
 pub mod spectrum;
 pub(crate) mod theme;
 pub mod track;

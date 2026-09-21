@@ -15,6 +15,7 @@ Music Player 是一个用 Rust 编写的终端音乐库播放器。它使用 Rod
 - Unicode 友好的实时模糊搜索，覆盖标题、歌手、专辑和相对路径
 - 临时播放队列可查看、跳播、移除、重排和清空，另有持久命名播放列表
 - 播放列表中的失效歌曲会被标记并跳过；删除列表绝不删除音乐文件
+- 退出时记住当前歌曲与进度，下次打开同一音乐库时暂停在原处，按 `Space` 续播
 
 默认界面继承终端自身的背景，不绘制应用专属的全局背景。主要文字使用柔和白色，次要信息和边框采用分层灰白，音频频谱使用统一的灰白渐变。
 
@@ -104,6 +105,7 @@ music-player --help
 |---|---|---|
 | 配置 | `$XDG_CONFIG_HOME/tui-music-player/config.toml` | `%APPDATA%\tui-music-player\config.toml` |
 | 播放列表 | `$XDG_DATA_HOME/tui-music-player/playlists/*.json` | `%APPDATA%\tui-music-player\playlists\*.json` |
+| 上次播放位置 | `$XDG_DATA_HOME/tui-music-player/session.toml` | `%APPDATA%\tui-music-player\session.toml` |
 | 可删除缓存 | `$XDG_CACHE_HOME/tui-music-player/library.sqlite3` | `%LOCALAPPDATA%\tui-music-player\library.sqlite3` |
 
 Linux 没有显式设置 XDG 基础目录时，通常对应 `~/.config`、`~/.local/share` 和 `~/.cache`。Windows Installer 和 Portable ZIP 使用相同的 AppData 目录；升级、删除 Portable 文件或卸载程序都不会删除这些用户数据。
