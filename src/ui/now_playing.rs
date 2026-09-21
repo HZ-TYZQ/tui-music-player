@@ -7,6 +7,7 @@ use crate::app::App;
 use crate::theme::Theme;
 
 use super::library::{LIST_ICON_WIDTH, playback_action_indicator};
+use super::lyrics::inline_lyric;
 use super::text::{ascii_progress_bar, fmt_duration, now_playing_text};
 
 /// 返回进度条自身占据的矩形，供点击跳转做命中测试。
@@ -15,14 +16,21 @@ pub(super) fn draw_now_playing(
     app: &App,
     area: Rect,
     theme: &Theme,
+    lyrics_pane_shown: bool,
 ) -> Option<Rect> {
-    let block = Block::bordered()
+    let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(theme.border))
         .title(Span::styled(
             " ♫ 正在播放 ",
             Style::new().fg(theme.primary).bold(),
         ));
+    // 没有歌词面板时，当前歌词行借用底边显示，不占额外行。
+    if !lyrics_pane_shown
+        && let Some(text) = inline_lyric(app, usize::from(area.width.saturating_sub(6)))
+    {
+        block = block.title_bottom(Line::styled(text, Style::new().fg(theme.primary)).centered());
+    }
     let inner = block.inner(area);
     frame.render_widget(block, area);
 

@@ -39,7 +39,7 @@ pub(super) fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme, view: &m
                 "n / p          下一首 / 上一首历史",
                 "z              循环方式：顺序 / 列表 / 单曲",
                 "s              开 / 关随机播放",
-                "v              显示 / 隐藏音频频谱",
+                "v / y          显示 / 隐藏频谱 / 歌词",
                 "o / O          排序字段 / 升降序",
                 "M              开 / 关鼠标",
                 "/              实时模糊搜索",

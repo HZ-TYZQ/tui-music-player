@@ -1,6 +1,7 @@
 //! Ratatui 界面：音乐库、播放状态、搜索和模态弹层。
 
 mod library;
+mod lyrics;
 mod now_playing;
 mod overlays;
 mod text;
@@ -16,6 +17,7 @@ use crate::app::App;
 use crate::theme::{DEFAULT_THEME, Theme};
 
 use library::draw_library;
+use lyrics::{draw_lyrics, lyrics_pane_width};
 use now_playing::draw_now_playing;
 use overlays::draw_overlay;
 pub use text::fmt_duration;
@@ -109,8 +111,8 @@ fn draw_with_theme(frame: &mut Frame, app: &App, view: &mut ViewLayout, theme: &
             Constraint::Length(1),
         ])
         .split(area);
-        draw_library(frame, app, chunks[0], theme, &mut view.library);
-        view.progress = draw_now_playing(frame, app, chunks[1], theme);
+        let pane = draw_top(frame, app, chunks[0], theme, view);
+        view.progress = draw_now_playing(frame, app, chunks[1], theme, pane);
         draw_footer(frame, app, chunks[2], theme);
     } else {
         let chunks = Layout::vertical([
@@ -120,12 +122,32 @@ fn draw_with_theme(frame: &mut Frame, app: &App, view: &mut ViewLayout, theme: &
             Constraint::Length(1),
         ])
         .split(area);
-        draw_library(frame, app, chunks[0], theme, &mut view.library);
+        let pane = draw_top(frame, app, chunks[0], theme, view);
         draw_visualizer(frame, app, chunks[1], theme);
-        view.progress = draw_now_playing(frame, app, chunks[2], theme);
+        view.progress = draw_now_playing(frame, app, chunks[2], theme, pane);
         draw_footer(frame, app, chunks[3], theme);
     }
     draw_overlay(frame, app, theme, &mut view.overlay);
+}
+
+/// 曲库，以及宽终端下它右侧的歌词面板。返回是否画了歌词面板。
+fn draw_top(
+    frame: &mut Frame,
+    app: &App,
+    area: Rect,
+    theme: &Theme,
+    view: &mut ViewLayout,
+) -> bool {
+    let pane_width = lyrics_pane_width(area.width, app.lyrics().is_some());
+    if pane_width == 0 {
+        draw_library(frame, app, area, theme, &mut view.library);
+        return false;
+    }
+    let columns =
+        Layout::horizontal([Constraint::Min(1), Constraint::Length(pane_width)]).split(area);
+    draw_library(frame, app, columns[0], theme, &mut view.library);
+    draw_lyrics(frame, app, columns[1], theme);
+    true
 }
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {

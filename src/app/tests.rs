@@ -1179,3 +1179,113 @@ fn quitting_with_nothing_loaded_clears_the_session() {
     app.apply_scan_finished(vec![long_track(&long)], Vec::new());
     assert_eq!(app.player.state(), PlayState::Stopped);
 }
+
+/// 每行文字去掉空格：宽字符后面的占位格也是空格，按原样拼接无法直接比对中文。
+fn screen_rows(backend: &ratatui::backend::TestBackend) -> Vec<String> {
+    let buffer = backend.buffer();
+    (0..buffer.area.height)
+        .map(|row| {
+            (0..buffer.area.width)
+                .map(|column| buffer[(column, row)].symbol())
+                .filter(|symbol| *symbol != " ")
+                .collect()
+        })
+        .collect()
+}
+
+/// 播放带同名 .lrc 的 100 秒测试曲，停在 35 秒（第二句）。
+fn play_track_with_lyrics(temp: &Path, app: &mut App) {
+    std::fs::write(
+        temp.join("music").join("long.lrc"),
+        "[ti:测试]\n[00:00.00]第一句\n[00:30.00]第二句\n[00:30.00]第二句译文\n[00:50.00]第三句\n",
+    )
+    .unwrap();
+    play_long_track_at(temp, app, Duration::from_secs(35));
+    app.sync_lyrics();
+}
+
+#[test]
+fn lyrics_pane_follows_the_position_beside_the_library() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    play_track_with_lyrics(temp.path(), &mut app);
+    assert_eq!(app.lyrics().map(|lyrics| lyrics.lines().len()), Some(4));
+
+    let (view, backend) = render(&app, 120, 30);
+    let rows = screen_rows(&backend);
+    assert!(rows[0].contains("歌词"), "宽终端应显示歌词面板");
+    assert!(rows.iter().any(|row| row.contains("第二句译文")));
+    assert!(rows.iter().any(|row| row.contains("第三句")));
+    // 曲库让出右侧，点击面板区域不会落到曲库。
+    assert!(!view.library.contains(110, 5));
+
+    let highlighted = |text: &str| {
+        let buffer = backend.buffer();
+        let row = rows.iter().position(|row| row.contains(text)).unwrap();
+        let column = (0..buffer.area.width)
+            .rev()
+            .find(|column| {
+                buffer[(*column, row as u16)].symbol() == text.chars().next().unwrap().to_string()
+            })
+            .unwrap();
+        buffer[(column, row as u16)]
+            .modifier
+            .contains(ratatui::style::Modifier::BOLD)
+    };
+    assert!(highlighted("第二句"));
+    assert!(!highlighted("第三句"));
+}
+
+#[test]
+fn narrow_terminals_show_the_current_lyric_on_the_now_playing_border() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    play_track_with_lyrics(temp.path(), &mut app);
+
+    let (_, backend) = render(&app, 80, 24);
+    let rows = screen_rows(&backend);
+    assert!(!rows[0].contains("歌词"));
+    let border = rows.iter().rev().nth(1).unwrap();
+    assert!(border.contains("第二句/第二句译文"), "底边是 {border:?}");
+    assert!(!rows.iter().any(|row| row.contains("第三句")));
+}
+
+#[test]
+fn the_lyrics_key_hides_lyrics_and_the_choice_is_saved() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    play_track_with_lyrics(temp.path(), &mut app);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+    assert!(!app.config.lyrics_enabled);
+    assert!(app.lyrics().is_none());
+    let (_, backend) = render(&app, 120, 30);
+    assert!(
+        !screen_rows(&backend)
+            .iter()
+            .any(|row| row.contains("第二句"))
+    );
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+    assert!(app.lyrics().is_some());
+    assert_eq!(app.message.as_deref(), Some("已开启歌词"));
+}
+
+#[test]
+fn tracks_without_lyrics_keep_the_full_width_library() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    play_long_track_at(temp.path(), &mut app, Duration::from_secs(35));
+    app.sync_lyrics();
+    assert!(app.lyrics().is_none());
+
+    let (view, backend) = render(&app, 120, 30);
+    assert!(!screen_rows(&backend)[0].contains("歌词"));
+    assert!(view.library.contains(110, 5));
+
+    // 重扫之后才放进来的 .lrc 会被读到。
+    std::fs::write(
+        temp.path().join("music").join("long.lrc"),
+        "[00:01.00]新歌词\n",
+    )
+    .unwrap();
+    app.apply_scan_finished(app.tracks.clone(), Vec::new());
+    app.sync_lyrics();
+    assert!(app.lyrics().is_some());
+}

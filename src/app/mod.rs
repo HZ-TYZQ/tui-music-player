@@ -1,6 +1,7 @@
 //! 应用状态和所有可观察的播放行为。
 
 mod input;
+mod lyrics;
 mod media;
 mod mouse;
 mod playback;
@@ -18,6 +19,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::{AppConfig, AppPaths};
 use crate::library::{LibraryEvent, LibraryWorker};
+use crate::lyrics::Lyrics;
 use crate::media::MediaEvent;
 use crate::player::{PlayState, Player, PlayerEvent};
 use crate::playlist::PlaylistStore;
@@ -79,6 +81,9 @@ pub struct App {
     media_events: Vec<MediaEvent>,
     /// 上次退出时的曲目与位置，等第一次扫描完成、曲库就绪后再恢复。
     pending_session: Option<Session>,
+    /// 歌词所属的曲目路径与结果（None 表示这首没有同步歌词）。
+    /// 路径与播放器当前曲目不一致时在下一个 tick 重新加载。
+    lyrics: Option<(PathBuf, Option<Lyrics>)>,
     /// 上一次鼠标按下的时刻与位置，仅用于判定双击。
     last_click: Option<(Instant, u16, u16)>,
 }
@@ -171,6 +176,7 @@ impl App {
             shuffle_cursor: 0,
             media_events: Vec::new(),
             pending_session,
+            lyrics: None,
             last_click: None,
         })
     }
@@ -213,6 +219,7 @@ impl App {
             }
         }
 
+        self.sync_lyrics();
         self.search.tick();
         self.restore_pending_selection();
         self.clamp_selections();
@@ -296,6 +303,8 @@ impl App {
     /// 应用一次完整扫描结果，并按路径尽量保留正在播放与选中的歌曲位置。
     fn apply_scan_finished(&mut self, tracks: Vec<Track>, warnings: Vec<String>) {
         self.replace_tracks(tracks);
+        // 重扫往往是因为刚放进了 .lrc 文件，下一个 tick 重新读取歌词。
+        self.lyrics = None;
         self.scanning = false;
         self.scan_progress = (self.tracks.len(), self.tracks.len());
         self.message = if warnings.is_empty() {

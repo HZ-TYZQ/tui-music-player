@@ -45,6 +45,7 @@ impl App {
             KeyCode::Char('z') => self.cycle_repeat(),
             KeyCode::Char('s') => self.toggle_shuffle(),
             KeyCode::Char('v') => self.toggle_visualizer(),
+            KeyCode::Char('y') => self.toggle_lyrics(),
             KeyCode::Char('o') => self.cycle_sort(),
             KeyCode::Char('O') => self.toggle_sort_direction(),
             KeyCode::Char('/') => {

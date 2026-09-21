@@ -63,6 +63,7 @@ pub struct AppConfig {
     pub sort: SortOrder,
     pub visualizer_enabled: bool,
     pub mouse_enabled: bool,
+    pub lyrics_enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,6 +79,7 @@ struct RawConfig {
     sort: SortOrder,
     visualizer_enabled: bool,
     mouse_enabled: bool,
+    lyrics_enabled: bool,
 }
 
 impl Default for RawConfig {
@@ -93,6 +95,7 @@ impl Default for RawConfig {
             sort: SortOrder::default(),
             visualizer_enabled: true,
             mouse_enabled: true,
+            lyrics_enabled: true,
         }
     }
 }
@@ -109,6 +112,7 @@ impl Default for AppConfig {
             sort: SortOrder::default(),
             visualizer_enabled: true,
             mouse_enabled: true,
+            lyrics_enabled: true,
         }
     }
 }
@@ -135,6 +139,7 @@ impl AppConfig {
             sort: raw.sort,
             visualizer_enabled: raw.visualizer_enabled,
             mouse_enabled: raw.mouse_enabled,
+            lyrics_enabled: raw.lyrics_enabled,
         }
     }
 
@@ -221,6 +226,7 @@ mod tests {
             repeat: RepeatMode::None,
             shuffle: true,
             visualizer_enabled: false,
+            lyrics_enabled: false,
             ..AppConfig::default()
         };
         config.save(&path).unwrap();
@@ -234,6 +240,7 @@ mod tests {
         assert_eq!(loaded.repeat, RepeatMode::None);
         assert!(loaded.shuffle);
         assert!(!loaded.visualizer_enabled);
+        assert!(!loaded.lyrics_enabled);
 
         fs::write(&path, "version = 1\nvolume = 255\n").unwrap();
         let (loaded, _) = AppConfig::load(&path).unwrap();
@@ -302,6 +309,7 @@ mod tests {
 
         assert!(warning.is_none());
         assert!(loaded.visualizer_enabled);
+        assert!(loaded.lyrics_enabled);
         assert_eq!(loaded.repeat, RepeatMode::None);
         assert!(!loaded.shuffle);
     }
