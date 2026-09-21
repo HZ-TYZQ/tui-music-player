@@ -156,8 +156,10 @@ fn decode(bytes: &[u8]) -> Option<String> {
     }
     let utf16 = |rest: &[u8], from: fn([u8; 2]) -> u16| {
         let units: Vec<u16> = rest
-            .chunks_exact(2)
-            .map(|pair| from([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| from(*pair))
             .collect();
         String::from_utf16(&units).ok()
     };
