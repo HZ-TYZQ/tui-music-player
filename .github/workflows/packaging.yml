@@ -1,0 +1,91 @@
+name: Packaging
+
+# Building the RPM and the Windows installer takes most of the CI time and
+# repeats the tests CI already runs, so it only runs when packaging inputs
+# change. Release-prep commits always touch Cargo.toml and the spec, so the
+# packages are still built and the installer tested before every tag; run it
+# by hand for anything else.
+on:
+  push:
+    branches: [master]
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - LICENSE
+      - assets/**
+      - packaging/**
+      - '!packaging/music-player.1'
+      - .github/workflows/packaging.yml
+  pull_request:
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - LICENSE
+      - assets/**
+      - packaging/**
+      - '!packaging/music-player.1'
+      - .github/workflows/packaging.yml
+  workflow_dispatch:
+
+jobs:
+  fedora-rpm:
+    runs-on: ubuntu-latest
+    container: fedora:44
+    steps:
+      - name: Install build tools
+        run: |
+          dnf install -y \
+            git rust cargo rpm-build tar gzip findutils desktop-file-utils \
+            alsa-lib-devel \
+            sqlite-devel
+      - uses: actions/checkout@v6
+      - name: Build RPM and SRPM
+        run: ./packaging/build-rpm.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: fedora-rpms-ci
+          path: |
+            packaging/rpmbuild/RPMS/**/*.rpm
+            packaging/rpmbuild/SRPMS/*.rpm
+          if-no-files-found: error
+
+  # Mirrors the Release packaging steps so ISS, license staging, and launcher
+  # regressions surface before a tag build.
+  windows-package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release binary
+        run: cargo build --release --locked
+      - name: Resolve project version
+        id: version
+        shell: bash
+        run: echo "version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)" >> "$GITHUB_OUTPUT"
+      - name: Install Inno Setup
+        shell: pwsh
+        run: >-
+          ./packaging/windows/install-innosetup.ps1
+          -InstallDir "$env:RUNNER_TEMP\innosetup"
+          -ExportGitHubEnvironment
+      - name: Build Portable ZIP and Installer
+        shell: pwsh
+        run: >-
+          ./packaging/windows/package-windows.ps1
+          -ProjectDir "$env:GITHUB_WORKSPACE"
+          -MusicPlayerExe "$env:GITHUB_WORKSPACE\target\release\music-player.exe"
+          -Version "${{ steps.version.outputs.version }}"
+          -OutputDir "$env:RUNNER_TEMP\windows-dist"
+      - name: Test Installer behavior
+        shell: pwsh
+        run: >-
+          ./packaging/windows/test-installer.ps1
+          -SetupPath "$env:RUNNER_TEMP\windows-dist\music-player-${{ steps.version.outputs.version }}-windows-x86_64-setup.exe"
+      - name: Retain packages for diagnosis
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-packages-ci
+          path: ${{ runner.temp }}/windows-dist/*
+          if-no-files-found: ignore
