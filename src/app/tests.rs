@@ -1256,12 +1256,11 @@ fn the_lyrics_key_hides_lyrics_and_the_choice_is_saved() {
     app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
     assert!(!app.config.lyrics_enabled);
     assert!(app.lyrics().is_none());
-    let (_, backend) = render(&app, 120, 30);
-    assert!(
-        !screen_rows(&backend)
-            .iter()
-            .any(|row| row.contains("第二句"))
-    );
+    let (view, backend) = render(&app, 120, 30);
+    let rows = screen_rows(&backend);
+    assert!(!rows[0].contains("歌词"), "关闭歌词后不留面板");
+    assert!(!rows.iter().any(|row| row.contains("第二句")));
+    assert!(view.library.contains(110, 5), "曲库占满整行");
 
     app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
     assert!(app.lyrics().is_some());
@@ -1269,15 +1268,28 @@ fn the_lyrics_key_hides_lyrics_and_the_choice_is_saved() {
 }
 
 #[test]
-fn tracks_without_lyrics_keep_the_full_width_library() {
+fn the_lyrics_pane_stays_beside_the_library_without_lyrics() {
     let (temp, mut app) = test_app(AppConfig::default());
+    // 还没播放时面板就在，播放区和面板各显示一次“未在播放”。
+    let (view, backend) = render(&app, 120, 30);
+    let rows = screen_rows(&backend);
+    assert!(rows[0].contains("歌词"));
+    assert_eq!(
+        rows.iter().filter(|row| row.contains("未在播放")).count(),
+        2
+    );
+    assert!(!view.library.contains(110, 5));
+
     play_long_track_at(temp.path(), &mut app, Duration::from_secs(35));
     app.sync_lyrics();
     assert!(app.lyrics().is_none());
 
+    // 切到没有歌词的曲目，曲库宽度不变，面板里给出提示。
     let (view, backend) = render(&app, 120, 30);
-    assert!(!screen_rows(&backend)[0].contains("歌词"));
-    assert!(view.library.contains(110, 5));
+    let rows = screen_rows(&backend);
+    assert!(rows[0].contains("歌词"));
+    assert!(rows.iter().any(|row| row.contains("暂无同步歌词")));
+    assert!(!view.library.contains(110, 5));
 
     // 重扫之后才放进来的 .lrc 会被读到。
     std::fs::write(

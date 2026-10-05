@@ -130,7 +130,7 @@ fn draw_with_theme(frame: &mut Frame, app: &App, view: &mut ViewLayout, theme: &
     draw_overlay(frame, app, theme, &mut view.overlay);
 }
 
-/// 曲库，以及宽终端下它右侧的歌词面板。返回是否画了歌词面板。
+/// 曲库，以及开启歌词时宽终端下它右侧的歌词面板。返回是否画了歌词面板。
 fn draw_top(
     frame: &mut Frame,
     app: &App,
@@ -138,7 +138,7 @@ fn draw_top(
     theme: &Theme,
     view: &mut ViewLayout,
 ) -> bool {
-    let pane_width = lyrics_pane_width(area.width, app.lyrics().is_some());
+    let pane_width = lyrics_pane_width(area.width, app.config.lyrics_enabled);
     if pane_width == 0 {
         draw_library(frame, app, area, theme, &mut view.library);
         return false;

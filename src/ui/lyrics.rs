@@ -1,4 +1,4 @@
-//! 同步歌词：宽终端在曲库右侧显示滚动面板，窄终端只在播放区边框上显示当前行。
+//! 同步歌词：宽终端在曲库右侧常驻滚动面板，窄终端只在播放区边框上显示当前行。
 
 use std::ops::Range;
 
@@ -16,8 +16,11 @@ const MIN_SPLIT_WIDTH: u16 = 96;
 const MAX_PANE_WIDTH: u16 = 48;
 
 /// 歌词面板的宽度；不显示面板时为 0。
-pub(super) fn lyrics_pane_width(area_width: u16, has_lyrics: bool) -> u16 {
-    if !has_lyrics || area_width < MIN_SPLIT_WIDTH {
+///
+/// 只看歌词开关而不看当前曲目有没有歌词：切到没有歌词的曲目时曲库宽度不变，
+/// 布局不会跟着跳动。
+pub(super) fn lyrics_pane_width(area_width: u16, enabled: bool) -> u16 {
+    if !enabled || area_width < MIN_SPLIT_WIDTH {
         return 0;
     }
     (area_width * 2 / 5).min(MAX_PANE_WIDTH)
@@ -44,12 +47,13 @@ pub(super) fn draw_lyrics(frame: &mut Frame, app: &App, area: Rect, theme: &Them
         ));
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let Some(lyrics) = app.lyrics() else {
-        return;
-    };
     if inner.is_empty() {
         return;
     }
+    let Some(lyrics) = app.lyrics() else {
+        draw_placeholder(frame, app, inner, theme);
+        return;
+    };
 
     let lines = lyrics.lines();
     let height = usize::from(inner.height);
@@ -75,6 +79,28 @@ pub(super) fn draw_lyrics(frame: &mut Frame, app: &App, area: Rect, theme: &Them
         })
         .collect();
     frame.render_widget(Paragraph::new(text), inner);
+}
+
+/// 面板常驻，没有歌词可显示时留一行提示，停在有歌词时当前行所在的高度。
+fn draw_placeholder(frame: &mut Frame, app: &App, inner: Rect, theme: &Theme) {
+    let hint = if app.current_track().is_some() {
+        "暂无同步歌词"
+    } else {
+        "未在播放"
+    };
+    let row = Rect {
+        y: inner.y + inner.height.saturating_sub(1) / 2,
+        height: 1,
+        ..inner
+    };
+    frame.render_widget(
+        Line::styled(
+            truncate_display(hint, usize::from(inner.width)),
+            Style::new().fg(theme.muted),
+        )
+        .centered(),
+        row,
+    );
 }
 
 /// 窄终端下放在播放区底边的当前行；没有正在唱的非空行时为 None。
