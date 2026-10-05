@@ -41,6 +41,8 @@ pub struct ListView {
     state: ListState,
     area: Option<Rect>,
     len: usize,
+    /// 每个列表项占的屏幕行数。
+    item_height: u16,
 }
 
 impl ListView {
@@ -50,8 +52,13 @@ impl ListView {
     }
 
     pub(crate) fn record(&mut self, area: Rect, len: usize) {
+        self.record_items(area, len, 1);
+    }
+
+    pub(crate) fn record_items(&mut self, area: Rect, len: usize, item_height: u16) {
         self.area = Some(area);
         self.len = len;
+        self.item_height = item_height;
     }
 
     pub(crate) fn clear(&mut self) {
@@ -65,7 +72,12 @@ impl ListView {
         if row < area.y || row >= area.bottom() {
             return None;
         }
-        let index = self.state.offset() + usize::from(row - area.y);
+        let slot = (row - area.y) / self.item_height;
+        // ratatui 只画完整的列表项，底部放不下一整项的零头是空白。
+        if slot >= area.height / self.item_height {
+            return None;
+        }
+        let index = self.state.offset() + usize::from(slot);
         (index < self.len).then_some(index)
     }
 

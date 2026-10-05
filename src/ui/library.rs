@@ -1,4 +1,4 @@
-//! 曲库列表、播放指示器和响应式列宽。
+//! 曲库列表与播放指示器：每首歌两行，标题和时长在上，歌手、专辑和格式在下。
 
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, List, ListItem, Paragraph};
@@ -9,7 +9,7 @@ use crate::theme::Theme;
 use crate::track::Track;
 
 use super::ListView;
-use super::text::{column_text, fmt_duration};
+use super::text::{column_text, fmt_duration, truncate_display};
 
 // 暂停符号显式请求文本字形，两个操作符号都保留三列的图标区域。
 pub(super) const PAUSE_ACTION_ICON: &str = "⏸\u{fe0e}  ";
@@ -18,10 +18,8 @@ pub(super) const STOPPED_ICON: &str = "■  ";
 pub(super) const INACTIVE_ICON: &str = "   ";
 pub(super) const LIST_ICON_WIDTH: usize = 3;
 pub(super) const LIST_GAP_WIDTH: usize = 2;
-pub(super) const FORMAT_COLUMN_WIDTH: usize = 6;
-pub(super) const MIN_TITLE_WIDTH: usize = 12;
-pub(super) const MIN_ARTIST_WIDTH: usize = 8;
-pub(super) const MIN_ALBUM_WIDTH: usize = 8;
+/// 曲库每个列表项占的屏幕行数，鼠标命中测试按它换算。
+pub(super) const LIBRARY_ITEM_HEIGHT: u16 = 2;
 const HIGHLIGHT_SYMBOL_WIDTH: usize = 2;
 
 pub(super) fn draw_library(
@@ -71,7 +69,7 @@ pub(super) fn draw_library(
     }
 
     let usable = usize::from(area.width).saturating_sub(2 + HIGHLIGHT_SYMBOL_WIDTH);
-    let layout = track_row_layout(usable, app.duration_column_width as usize);
+    let duration_width = usize::from(app.duration_column_width);
     let muted = Style::new().fg(theme.muted);
     let items = app.visible_indices().iter().filter_map(|index| {
         let track = app.tracks.get(*index)?;
@@ -86,17 +84,16 @@ pub(super) fn draw_library(
         } else {
             Style::new().fg(theme.primary)
         };
-        let mut columns = track_row_columns(track, &layout).into_iter();
-        let title = columns.next()?;
-        let mut spans = vec![
-            Span::styled(icon, icon_style),
-            Span::styled(title, title_style),
-        ];
-        for column in columns {
-            spans.push(Span::styled("  ", muted));
-            spans.push(Span::styled(column, muted));
-        }
-        Some(ListItem::new(Line::from(spans)))
+        let (title, duration, detail) = track_row_text(track, usable, duration_width);
+        Some(ListItem::new(vec![
+            Line::from(vec![
+                Span::styled(icon, icon_style),
+                Span::styled(title, title_style),
+                Span::styled(duration, muted),
+            ]),
+            // 第二行与标题左对齐；选中时 ratatui 在这一行用空白代替高亮符号。
+            Line::from(vec![Span::raw(INACTIVE_ICON), Span::styled(detail, muted)]),
+        ]))
     });
 
     let inner = block.inner(area);
@@ -106,7 +103,7 @@ pub(super) fn draw_library(
         .highlight_symbol(Span::styled("▸ ", Style::new().fg(theme.primary)));
     let selected = (!app.visible_indices().is_empty()).then_some(app.selected);
     frame.render_stateful_widget(list, area, view.state_for(selected));
-    view.record(inner, app.visible_indices().len());
+    view.record_items(inner, app.visible_indices().len(), LIBRARY_ITEM_HEIGHT);
 }
 
 pub(super) fn playback_action_indicator(state: PlayState, theme: &Theme) -> (&'static str, Style) {
@@ -117,123 +114,36 @@ pub(super) fn playback_action_indicator(state: PlayState, theme: &Theme) -> (&'s
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct TrackRowLayout {
-    pub(super) title: usize,
-    pub(super) artist: Option<usize>,
-    pub(super) album: Option<usize>,
-    pub(super) format: bool,
-    pub(super) duration: usize,
-}
-
-pub(super) fn track_row_layout(usable: usize, duration_width: usize) -> TrackRowLayout {
-    let tiers = [
-        (true, true, true),
-        (true, true, false),
-        (true, false, false),
-        (false, false, false),
-    ];
-    for &(show_artist, show_album, show_format) in &tiers {
-        let content_columns =
-            2 + usize::from(show_artist) + usize::from(show_album) + usize::from(show_format);
-        let minimum = LIST_ICON_WIDTH
-            + duration_width
-            + if show_format { FORMAT_COLUMN_WIDTH } else { 0 }
-            + MIN_TITLE_WIDTH
-            + if show_artist { MIN_ARTIST_WIDTH } else { 0 }
-            + if show_album { MIN_ALBUM_WIDTH } else { 0 }
-            + LIST_GAP_WIDTH * (content_columns - 1);
-        if usable >= minimum {
-            return distribute_row_width(
-                usable,
-                duration_width,
-                show_artist,
-                show_album,
-                show_format,
-            );
-        }
-    }
-    distribute_row_width(usable, duration_width, false, false, false)
-}
-
-fn distribute_row_width(
-    usable: usize,
+/// 一首歌去掉播放图标后的文字：标题（补足空白）、时长、第二行的详情。
+///
+/// 标题与时长合起来恰好占满 `width - 图标宽`，时长右对齐成一列；
+/// 详情按同样的宽度截断。
+pub(super) fn track_row_text(
+    track: &Track,
+    width: usize,
     duration_width: usize,
-    show_artist: bool,
-    show_album: bool,
-    show_format: bool,
-) -> TrackRowLayout {
-    let content_columns =
-        2 + usize::from(show_artist) + usize::from(show_album) + usize::from(show_format);
-    let fixed = LIST_ICON_WIDTH
-        + duration_width
-        + LIST_GAP_WIDTH * (content_columns - 1)
-        + if show_format { FORMAT_COLUMN_WIDTH } else { 0 };
-    let variable_area = usable.saturating_sub(fixed);
-    if show_artist && show_album {
-        let extra =
-            variable_area.saturating_sub(MIN_TITLE_WIDTH + MIN_ARTIST_WIDTH + MIN_ALBUM_WIDTH);
-        let mut title = MIN_TITLE_WIDTH + extra * 45 / 100;
-        let artist = MIN_ARTIST_WIDTH + extra * 30 / 100;
-        let album = MIN_ALBUM_WIDTH + extra * 25 / 100;
-        title += variable_area.saturating_sub(title + artist + album);
-        TrackRowLayout {
-            title,
-            artist: Some(artist),
-            album: Some(album),
-            format: show_format,
-            duration: duration_width,
-        }
-    } else if show_artist {
-        let extra = variable_area.saturating_sub(MIN_TITLE_WIDTH + MIN_ARTIST_WIDTH);
-        let mut title = MIN_TITLE_WIDTH + extra * 60 / 100;
-        let artist = MIN_ARTIST_WIDTH + extra * 40 / 100;
-        title += variable_area.saturating_sub(title + artist);
-        TrackRowLayout {
-            title,
-            artist: Some(artist),
-            album: None,
-            format: show_format,
-            duration: duration_width,
-        }
-    } else {
-        TrackRowLayout {
-            title: variable_area,
-            artist: None,
-            album: None,
-            format: show_format,
-            duration: duration_width,
-        }
-    }
-}
-
-pub(super) fn track_row_columns(track: &Track, layout: &TrackRowLayout) -> Vec<String> {
-    let mut columns = vec![column_text(track.display_title(), layout.title, false)];
-    if let Some(width) = layout.artist {
-        columns.push(column_text(
-            track.artist.as_deref().unwrap_or("未知歌手"),
-            width,
-            false,
-        ));
-    }
-    if let Some(width) = layout.album {
-        columns.push(column_text(
-            track.album.as_deref().unwrap_or("未知专辑"),
-            width,
-            false,
-        ));
-    }
-    if layout.format {
-        columns.push(column_text(
-            track.format.as_deref().unwrap_or("?"),
-            FORMAT_COLUMN_WIDTH,
-            false,
-        ));
-    }
+) -> (String, String, String) {
+    let content = width.saturating_sub(LIST_ICON_WIDTH);
+    let title_width = content.saturating_sub(duration_width + LIST_GAP_WIDTH);
+    let title = format!(
+        "{}{}",
+        column_text(track.display_title(), title_width, false),
+        " ".repeat(LIST_GAP_WIDTH)
+    );
     let duration = track
         .duration
         .map(fmt_duration)
         .unwrap_or_else(|| "--:--".into());
-    columns.push(column_text(&duration, layout.duration, true));
-    columns
+    let duration = column_text(&duration, duration_width, true);
+    // 歌手总要占个位置，第二行不会空着；专辑和格式未知时直接省略。
+    let detail = [
+        Some(track.artist.as_deref().unwrap_or("未知歌手")),
+        track.album.as_deref(),
+        track.format.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" · ");
+    (title, duration, truncate_display(&detail, content))
 }

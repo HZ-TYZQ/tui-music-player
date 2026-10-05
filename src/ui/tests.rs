@@ -2,17 +2,17 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use ratatui::prelude::Color;
+use ratatui::prelude::{Color, Rect};
 use unicode_width::UnicodeWidthStr;
 
 use crate::player::PlayState;
 use crate::theme::DEFAULT_THEME;
 use crate::track::Track;
 
+use super::ListView;
 use super::library::{
-    FORMAT_COLUMN_WIDTH, INACTIVE_ICON, LIST_GAP_WIDTH, LIST_ICON_WIDTH, MIN_ALBUM_WIDTH,
-    MIN_ARTIST_WIDTH, MIN_TITLE_WIDTH, PAUSE_ACTION_ICON, PLAY_ACTION_ICON, STOPPED_ICON,
-    playback_action_indicator, track_row_columns, track_row_layout,
+    INACTIVE_ICON, LIST_ICON_WIDTH, PAUSE_ACTION_ICON, PLAY_ACTION_ICON, STOPPED_ICON,
+    playback_action_indicator, track_row_text,
 };
 use super::overlays::resolve_queue_rows;
 use super::text::{ascii_progress_bar, fmt_duration, now_playing_text, truncate_display};
@@ -113,30 +113,7 @@ fn truncate_display_limits_by_terminal_width() {
 }
 
 #[test]
-fn track_row_layout_tiers_follow_derived_min_widths() {
-    let duration = 5;
-    let full_min = LIST_ICON_WIDTH
-        + MIN_TITLE_WIDTH
-        + MIN_ARTIST_WIDTH
-        + MIN_ALBUM_WIDTH
-        + FORMAT_COLUMN_WIDTH
-        + duration
-        + LIST_GAP_WIDTH * 4;
-    let layout = track_row_layout(full_min, duration);
-    assert!(layout.artist.is_some() && layout.album.is_some() && layout.format);
-    let layout = track_row_layout(full_min - 1, duration);
-    assert!(layout.artist.is_some() && layout.album.is_some() && !layout.format);
-
-    let no_album_min =
-        LIST_ICON_WIDTH + MIN_TITLE_WIDTH + MIN_ARTIST_WIDTH + duration + LIST_GAP_WIDTH * 2;
-    let layout = track_row_layout(no_album_min, duration);
-    assert!(layout.artist.is_some() && layout.album.is_none() && !layout.format);
-    let layout = track_row_layout(no_album_min - 1, duration);
-    assert!(layout.artist.is_none() && layout.album.is_none() && !layout.format);
-}
-
-#[test]
-fn track_row_columns_respect_the_layout_width() {
+fn track_rows_fill_the_width_and_right_align_the_duration() {
     let track = Track {
         path: PathBuf::from("/music/长标题.flac"),
         relative_path: PathBuf::from("长标题.flac"),
@@ -144,7 +121,7 @@ fn track_row_columns_respect_the_layout_width() {
         artist: Some("一个名字同样很长的歌手".to_owned()),
         album: Some("一张名字也非常非常长的专辑".to_owned()),
         duration: Some(Duration::from_secs(3_661)),
-        format: Some("MPEG-4 AAC".to_owned()),
+        format: Some("FLAC".to_owned()),
         track_number: None,
         disc_number: None,
         file_size: 1,
@@ -152,16 +129,53 @@ fn track_row_columns_respect_the_layout_width() {
     };
     let duration_width = 7;
     for usable in [22usize, 30, 42, 50, 66, 90] {
-        let layout = track_row_layout(usable, duration_width);
-        let columns = track_row_columns(&track, &layout);
-        let text_width = columns
-            .iter()
-            .map(|column| UnicodeWidthStr::width(column.as_str()))
-            .sum::<usize>()
-            + LIST_GAP_WIDTH * (columns.len() - 1);
-        assert_eq!(text_width + LIST_ICON_WIDTH, usable, "usable={usable}");
-        assert!(!columns.iter().any(|column| column.contains("MPEG-4")));
+        let (title, duration, detail) = track_row_text(&track, usable, duration_width);
+        let first =
+            UnicodeWidthStr::width(title.as_str()) + UnicodeWidthStr::width(duration.as_str());
+        assert_eq!(first + LIST_ICON_WIDTH, usable, "usable={usable}");
+        assert_eq!(duration, "1:01:01");
+        assert!(UnicodeWidthStr::width(detail.as_str()) + LIST_ICON_WIDTH <= usable);
+        assert!(detail.starts_with("一个"), "详情应以歌手开头：{detail:?}");
     }
+
+    let (title, _, detail) = track_row_text(&track, 200, duration_width);
+    assert!(title.starts_with("这是一首名字特别特别长的歌曲标题 "));
+    assert_eq!(
+        detail,
+        "一个名字同样很长的歌手 · 一张名字也非常非常长的专辑 · FLAC"
+    );
+}
+
+#[test]
+fn track_row_detail_skips_unknown_album_and_format_but_not_the_artist() {
+    let track = Track {
+        path: PathBuf::from("/music/a.mp3"),
+        relative_path: PathBuf::from("a.mp3"),
+        title: "Song".to_owned(),
+        artist: None,
+        album: None,
+        duration: None,
+        format: None,
+        track_number: None,
+        disc_number: None,
+        file_size: 1,
+        modified_ns: 1,
+    };
+    let (_, duration, detail) = track_row_text(&track, 60, 5);
+    assert_eq!(duration, "--:--");
+    assert_eq!(detail, "未知歌手");
+}
+
+#[test]
+fn two_row_items_map_both_rows_to_one_index_and_ignore_the_leftover_row() {
+    let mut view = ListView::default();
+    // 5 行高的列表放得下两个两行的列表项，最后一行是零头。
+    view.record_items(Rect::new(0, 1, 10, 5), 20, 2);
+    assert_eq!(view.index_at(1), Some(0));
+    assert_eq!(view.index_at(2), Some(0));
+    assert_eq!(view.index_at(3), Some(1));
+    assert_eq!(view.index_at(4), Some(1));
+    assert_eq!(view.index_at(5), None);
 }
 
 #[test]

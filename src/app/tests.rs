@@ -843,14 +843,18 @@ fn clicking_a_library_row_selects_it_and_double_click_plays_it() {
     app.search.replace_tracks(&app.tracks);
     settle_search_and_selection(&mut app);
 
-    // 曲库列表从第 1 行开始（第 0 行是边框），因此第 3 行是第 3 首。
+    // 曲库列表从第 1 行开始（第 0 行是边框），每首两行，因此第 5、6 行是第 3 首。
     let (view, _) = render(&app, 90, 24);
-    app.handle_mouse(click(10, 3), &view);
+    app.handle_mouse(click(10, 6), &view);
     assert_eq!(app.selected, 2);
     assert_eq!(app.playing_index, None);
 
-    app.handle_mouse(click(10, 3), &view);
+    app.handle_mouse(click(10, 6), &view);
     assert_eq!(app.playing_index, Some(2));
+
+    // 点标题行同样算这一首。
+    app.handle_mouse(click(10, 3), &view);
+    assert_eq!(app.selected, 1);
 }
 
 #[test]
@@ -869,7 +873,7 @@ fn two_clicks_on_different_rows_are_not_a_double_click() {
 
     let (view, _) = render(&app, 90, 24);
     app.handle_mouse(click(10, 1), &view);
-    app.handle_mouse(click(10, 2), &view);
+    app.handle_mouse(click(10, 3), &view);
 
     assert_eq!(app.selected, 1);
     assert_eq!(app.playing_index, None);
