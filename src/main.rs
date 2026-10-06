@@ -65,9 +65,7 @@ fn run_application() -> Result<(), String> {
     let session = match MediaSession::start() {
         Ok(session) => Some(session),
         Err(error) => {
-            if app.message.is_none() {
-                app.message = Some(error);
-            }
+            app.notify_if_idle(error);
             None
         }
     };
@@ -96,15 +94,15 @@ fn run(
     let mut view = ViewLayout::default();
     let mut mouse = MouseInput::default();
     let mut mouse_captured = false;
-    while !app.should_quit {
-        if app.config.mouse_enabled != mouse_captured {
-            set_mouse_capture(app.config.mouse_enabled)?;
-            mouse_captured = app.config.mouse_enabled;
+    while !app.should_quit() {
+        if app.config().mouse_enabled != mouse_captured {
+            set_mouse_capture(app.config().mouse_enabled)?;
+            mouse_captured = app.config().mouse_enabled;
         }
         terminal.draw(|frame| ui::draw(frame, app, &mut view))?;
         // 频谱开启时把主循环提到约 50Hz，与 spectrum 源 20ms interval 对齐；
         // 关闭时回到 50ms 降低空闲唤醒。
-        let poll_ms = if app.config.visualizer_enabled {
+        let poll_ms = if app.config().visualizer_enabled {
             20
         } else {
             50

@@ -16,8 +16,8 @@ impl App {
     /// 顺序播放跟随列表顺序，因此重排也会改变“下一首”的走向；
     /// 正在播放的曲目本身不变，只是它在列表中的位置变了。
     fn resort(&mut self) {
-        let tracks = std::mem::take(&mut self.tracks);
+        let tracks = self.catalog.take_tracks();
         self.replace_tracks(tracks);
-        self.message = Some(format!("排序：{}", self.config.sort.label()));
+        self.view.message = Some(format!("排序：{}", self.config.sort.label()));
     }
 }

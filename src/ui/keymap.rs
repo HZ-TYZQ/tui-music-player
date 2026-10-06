@@ -320,8 +320,8 @@ pub(super) const DELETE_CONFIRM: &[Binding] = &[
 /// 当前焦点的按键表，以及没有绑定的字符是否算文字输入。
 /// 弹层打开时只看弹层的表，按键不会漏到下面的曲库。
 fn bindings_for(app: &App) -> (&'static [Binding], bool) {
-    match app.overlay {
-        Overlay::None if app.search_active => (SEARCH, true),
+    match app.view().overlay {
+        Overlay::None if app.view().search_active => (SEARCH, true),
         Overlay::None => (LIBRARY, false),
         Overlay::Help => (HELP, false),
         Overlay::Playlists => (PLAYLISTS, false),

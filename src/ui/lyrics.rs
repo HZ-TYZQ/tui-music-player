@@ -64,7 +64,7 @@ pub(super) fn draw_lyrics(frame: &mut Frame, app: &App, area: Rect, theme: &Them
 
     let lines = lyrics.lines();
     let height = usize::from(inner.height);
-    let current = current_range(lyrics, app.player.position());
+    let current = current_range(lyrics, app.player().position());
     let overflow = lines.len().saturating_sub(height);
     let start = if lyrics.is_synced() {
         // 当前行尽量停在面板中间；开头和结尾不留多余空白。
@@ -119,7 +119,7 @@ fn draw_placeholder(frame: &mut Frame, app: &App, inner: Rect, theme: &Theme) {
 /// 窄终端下放在播放区底边的当前行；没有正在唱的非空行时为 None。
 pub(super) fn inline_lyric(app: &App, max_width: usize) -> Option<String> {
     let lyrics = app.lyrics()?;
-    let range = current_range(lyrics, app.player.position())?;
+    let range = current_range(lyrics, app.player().position())?;
     let text = lyrics.lines()[range]
         .iter()
         .map(|line| line.text.as_str())

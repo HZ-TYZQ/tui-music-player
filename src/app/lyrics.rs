@@ -10,8 +10,8 @@ impl App {
         if !self.config.lyrics_enabled {
             return None;
         }
-        let current = self.player.current_path()?;
-        match &self.lyrics {
+        let current = self.playback.player.current_path()?;
+        match &self.playback.lyrics {
             Some((path, lyrics)) if path == current => lyrics.as_ref(),
             _ => None,
         }
@@ -23,10 +23,11 @@ impl App {
         if !self.config.lyrics_enabled {
             return;
         }
-        let Some(current) = self.player.current_path() else {
+        let Some(current) = self.playback.player.current_path() else {
             return;
         };
         if self
+            .playback
             .lyrics
             .as_ref()
             .is_some_and(|(path, _)| path == current)
@@ -38,21 +39,21 @@ impl App {
             Ok(lyrics) => lyrics,
             Err(error) => {
                 // 不覆盖更要紧的提示（例如跳过失败曲目的汇总）。
-                if self.message.is_none() {
-                    self.message = Some(error);
+                if self.view.message.is_none() {
+                    self.view.message = Some(error);
                 }
                 None
             }
         };
-        self.lyrics = Some((current, lyrics));
+        self.playback.lyrics = Some((current, lyrics));
     }
 
     pub(super) fn toggle_lyrics(&mut self) {
         self.config.lyrics_enabled = !self.config.lyrics_enabled;
         if self.config.lyrics_enabled {
             self.sync_lyrics();
-            self.message = Some(
-                if self.lyrics().is_some() || self.player.current_path().is_none() {
+            self.view.message = Some(
+                if self.lyrics().is_some() || self.playback.player.current_path().is_none() {
                     "已开启歌词"
                 } else {
                     "已开启歌词；当前曲目没有歌词"
@@ -60,7 +61,7 @@ impl App {
                 .to_owned(),
             );
         } else {
-            self.message = Some("已关闭歌词".to_owned());
+            self.view.message = Some("已关闭歌词".to_owned());
         }
     }
 }

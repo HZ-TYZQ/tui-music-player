@@ -109,7 +109,7 @@ impl App {
             Action::Quit => self.should_quit = true,
             Action::TogglePause => self.toggle_or_start(),
             Action::Play => self.play_or_resume(),
-            Action::Pause => self.player.pause(),
+            Action::Pause => self.playback.player.pause(),
             Action::Next => self.play_next(false),
             Action::Previous => self.play_previous(),
             Action::SeekBy(offset) => self.seek_rel_micros(offset),
@@ -120,10 +120,10 @@ impl App {
             Action::ChangeVolume(delta) => self.change_volume(delta),
             Action::SetVolume(volume) => {
                 if volume > 0 {
-                    self.player.set_muted(false);
+                    self.playback.player.set_muted(false);
                     self.config.muted = false;
                 }
-                self.player.set_volume(volume);
+                self.playback.player.set_volume(volume);
                 self.config.volume = volume;
             }
             Action::ToggleMute => self.toggle_mute(),
@@ -141,22 +141,22 @@ impl App {
             Action::CycleSort => self.cycle_sort(),
             Action::ToggleSortDirection => self.toggle_sort_direction(),
             Action::Rescan => {
-                self.library.rescan();
-                self.message = Some("已请求重新扫描音乐库".to_owned());
+                self.scanner.rescan();
+                self.view.message = Some("已请求重新扫描音乐库".to_owned());
             }
             Action::StartSearch => {
-                self.search_active = true;
-                self.message = None;
+                self.view.search_active = true;
+                self.view.message = None;
             }
             Action::Enqueue => self.enqueue_selected(false),
             Action::EnqueueNext => self.enqueue_selected(true),
-            Action::OpenOverlay(overlay) => self.overlay = overlay,
+            Action::OpenOverlay(overlay) => self.view.overlay = overlay,
             Action::CursorDown => self.move_cursor(1),
             Action::CursorUp => self.move_cursor(-1),
             Action::SelectRow(row) => self.select_row(row),
             Action::ActivateRow(row) => {
                 self.select_row(row);
-                match self.overlay {
+                match self.view.overlay {
                     Overlay::None => self.play_selected(),
                     _ => self.activate(),
                 }
@@ -166,13 +166,13 @@ impl App {
             Action::InputChar(character) => self.input_char(character),
             Action::InputBackspace => self.input_backspace(),
             Action::NewPlaylist => {
-                self.name_input.clear();
-                self.overlay = Overlay::NameInput;
+                self.view.name_input.clear();
+                self.view.overlay = Overlay::NameInput;
             }
             Action::AddToPlaylist => self.add_selected_to_playlist(),
             Action::DeletePlaylist => {
                 if !self.playlists.all().is_empty() {
-                    self.overlay = Overlay::DeleteConfirm;
+                    self.view.overlay = Overlay::DeleteConfirm;
                 }
             }
             Action::ConfirmDelete => self.delete_selected_playlist(),
@@ -190,46 +190,49 @@ impl App {
                 .saturating_add_signed(delta)
                 .min(len.saturating_sub(1))
         };
-        match self.overlay {
+        match self.view.overlay {
             Overlay::None if delta.is_negative() => self.select_previous(),
             Overlay::None => self.select_next(),
             Overlay::Playlists => {
-                self.playlist_selected = step(self.playlist_selected, self.playlists.all().len());
+                self.view.playlist_selected =
+                    step(self.view.playlist_selected, self.playlists.all().len());
             }
             Overlay::PlaylistTracks => {
                 let len = self.selected_playlist_len();
-                self.playlist_track_selected = step(self.playlist_track_selected, len);
+                self.view.playlist_track_selected = step(self.view.playlist_track_selected, len);
             }
-            Overlay::Queue => self.queue_selected = step(self.queue_selected, self.queue.len()),
+            Overlay::Queue => {
+                self.view.queue_selected = step(self.view.queue_selected, self.playback.queue.len())
+            }
             Overlay::Help | Overlay::NameInput | Overlay::DeleteConfirm => {}
         }
     }
 
     fn select_row(&mut self, row: usize) {
-        match self.overlay {
+        match self.view.overlay {
             Overlay::None => {
                 self.cancel_pending_selection_restore();
-                self.selected = row;
+                self.view.selected = row;
             }
-            Overlay::Playlists => self.playlist_selected = row,
-            Overlay::PlaylistTracks => self.playlist_track_selected = row,
-            Overlay::Queue => self.queue_selected = row,
+            Overlay::Playlists => self.view.playlist_selected = row,
+            Overlay::PlaylistTracks => self.view.playlist_track_selected = row,
+            Overlay::Queue => self.view.queue_selected = row,
             Overlay::Help | Overlay::NameInput | Overlay::DeleteConfirm => {}
         }
     }
 
     fn activate(&mut self) {
-        match self.overlay {
-            Overlay::None if self.search_active => {
+        match self.view.overlay {
+            Overlay::None if self.view.search_active => {
                 self.cancel_pending_selection_restore();
                 self.play_selected();
-                self.search_active = false;
+                self.view.search_active = false;
             }
             Overlay::None => self.play_selected(),
             Overlay::Playlists => {
                 if !self.playlists.all().is_empty() {
-                    self.playlist_track_selected = 0;
-                    self.overlay = Overlay::PlaylistTracks;
+                    self.view.playlist_track_selected = 0;
+                    self.view.overlay = Overlay::PlaylistTracks;
                 }
             }
             Overlay::PlaylistTracks => self.play_playlist_from_selected(),
@@ -240,21 +243,23 @@ impl App {
     }
 
     fn back(&mut self) {
-        match self.overlay {
-            Overlay::None if self.search_active => self.cancel_search(),
-            Overlay::None => self.message = None,
-            Overlay::Help | Overlay::Playlists | Overlay::Queue => self.overlay = Overlay::None,
+        match self.view.overlay {
+            Overlay::None if self.view.search_active => self.cancel_search(),
+            Overlay::None => self.view.message = None,
+            Overlay::Help | Overlay::Playlists | Overlay::Queue => {
+                self.view.overlay = Overlay::None
+            }
             Overlay::PlaylistTracks | Overlay::NameInput | Overlay::DeleteConfirm => {
-                self.overlay = Overlay::Playlists;
+                self.view.overlay = Overlay::Playlists;
             }
         }
     }
 
     fn input_char(&mut self, character: char) {
-        match self.overlay {
-            Overlay::NameInput => self.name_input.push(character),
-            Overlay::None if self.search_active => {
-                let mut query = self.search.query().to_owned();
+        match self.view.overlay {
+            Overlay::NameInput => self.view.name_input.push(character),
+            Overlay::None if self.view.search_active => {
+                let mut query = self.catalog.query().to_owned();
                 query.push(character);
                 self.edit_search(query);
             }
@@ -263,12 +268,12 @@ impl App {
     }
 
     fn input_backspace(&mut self) {
-        match self.overlay {
+        match self.view.overlay {
             Overlay::NameInput => {
-                self.name_input.pop();
+                self.view.name_input.pop();
             }
-            Overlay::None if self.search_active => {
-                let mut query = self.search.query().to_owned();
+            Overlay::None if self.view.search_active => {
+                let mut query = self.catalog.query().to_owned();
                 query.pop();
                 self.edit_search(query);
             }
@@ -280,7 +285,7 @@ impl App {
     /// 真正的终端模式切换由主循环在下一次迭代时应用。
     fn toggle_mouse(&mut self) {
         self.config.mouse_enabled = !self.config.mouse_enabled;
-        self.message = Some(
+        self.view.message = Some(
             if self.config.mouse_enabled {
                 "鼠标已开启"
             } else {

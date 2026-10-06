@@ -50,10 +50,10 @@ fn file_label(path: &Path) -> String {
 
 impl App {
     pub(super) fn output_blocks_playback(&mut self) -> bool {
-        if !self.player.output_unavailable() {
+        if !self.playback.player.output_unavailable() {
             return false;
         }
-        self.message = Some("音频输出中断，已保留进度；按空格重试".to_owned());
+        self.view.message = Some("音频输出中断，已保留进度；按空格重试".to_owned());
         true
     }
 
@@ -64,7 +64,7 @@ impl App {
         if let Some(index) = self.selected_track_index()
             && let Err(skip) = self.play_index(index, true, BagUpdate::Reanchor)
         {
-            self.message = Some(skip.into_message());
+            self.view.message = Some(skip.into_message());
         }
     }
 
@@ -76,7 +76,7 @@ impl App {
         remember_current: bool,
         bag: BagUpdate,
     ) -> Result<(), Skip> {
-        let Some(track) = self.tracks.get(index) else {
+        let Some(track) = self.catalog.tracks().get(index) else {
             return Err(Skip::new(format!("#{}", index + 1), "不在曲库中"));
         };
         let path = track.path.clone();
@@ -84,28 +84,28 @@ impl App {
             .then(|| self.current_track().map(|track| track.path.clone()))
             .flatten()
             .filter(|current| *current != path);
-        let autoplay = self.player.state() != PlayState::Paused;
+        let autoplay = self.playback.player.state() != PlayState::Paused;
         let result = if autoplay {
-            self.player.play(&path)
+            self.playback.player.play(&path)
         } else {
-            self.player.open(&path)
+            self.playback.player.open(&path)
         };
         match result {
             Ok(()) => {
                 // 只有切歌成功后才改动历史与频谱状态；加载失败时旧曲仍是当前曲目。
                 if let Some(previous) = previous {
-                    self.history.push(previous);
+                    self.playback.history.push(previous);
                 }
                 // 保留已收敛的 sensitivity，重新进入 fast-adapt（见 spectrum.rs）。
-                self.spectrum.on_track_change();
-                self.playing_index = Some(index);
-                self.message = None;
+                self.playback.spectrum.on_track_change();
+                self.playback.playing_index = Some(index);
+                self.view.message = None;
                 if let Some(visible) = self
                     .visible_indices()
                     .iter()
                     .position(|visible_index| *visible_index == index)
                 {
-                    self.selected = visible;
+                    self.view.selected = visible;
                 }
                 match bag {
                     BagUpdate::Reanchor if self.config.shuffle => self.reanchor_shuffle_bag(index),
@@ -114,7 +114,7 @@ impl App {
                 Ok(())
             }
             Err(error) => Err(Skip::new(
-                self.tracks[index].display_title().to_owned(),
+                self.catalog.tracks()[index].display_title().to_owned(),
                 short_reason(&error, &path),
             )),
         }
@@ -142,16 +142,24 @@ impl App {
         if self.output_blocks_playback() {
             return;
         }
-        if self.tracks.is_empty() {
-            self.playing_index = None;
+        if self.catalog.tracks().is_empty() {
+            self.playback.playing_index = None;
             self.report_skipped(&skipped);
             return;
         }
-        let max_attempts = self.tracks.len().saturating_add(self.queue.len()).max(1);
-        let mut library_cursor = self.playing_index.or_else(|| self.selected_track_index());
+        let max_attempts = self
+            .catalog
+            .tracks()
+            .len()
+            .saturating_add(self.playback.queue.len())
+            .max(1);
+        let mut library_cursor = self
+            .playback
+            .playing_index
+            .or_else(|| self.selected_track_index());
         let mut natural_end = natural_end;
         for _ in 0..max_attempts {
-            if let Some(path) = self.queue.pop_front() {
+            if let Some(path) = self.playback.queue.pop_front() {
                 match self.play_path(&path, true, BagUpdate::Leave) {
                     Ok(()) => {
                         self.report_skipped(&skipped);
@@ -162,8 +170,8 @@ impl App {
                 continue;
             }
             let Some(next) = self.next_library_index_from(library_cursor, natural_end) else {
-                self.player.stop();
-                self.playing_index = None;
+                self.playback.player.stop();
+                self.playback.playing_index = None;
                 self.report_skipped(&skipped);
                 return;
             };
@@ -180,9 +188,9 @@ impl App {
             library_cursor = Some(next);
             natural_end = false;
         }
-        self.player.stop();
-        self.playing_index = None;
-        self.message = Some(no_playable_message("下一首", skipped.len()));
+        self.playback.player.stop();
+        self.playback.playing_index = None;
+        self.view.message = Some(no_playable_message("下一首", skipped.len()));
     }
 
     /// 成功切歌后汇总这一轮跳过的曲目。没有跳过就不碰 `message`，
@@ -191,7 +199,7 @@ impl App {
         let Some(first) = skipped.first() else {
             return;
         };
-        self.message = Some(match skipped.len() {
+        self.view.message = Some(match skipped.len() {
             1 => format!("已跳过“{}”：{}", first.name, first.reason),
             count => format!(
                 "已跳过 {count} 首无法播放的歌曲，其中“{}”：{}",
@@ -202,7 +210,10 @@ impl App {
 
     #[cfg(test)]
     pub(super) fn next_library_index(&mut self, natural_end: bool) -> Option<usize> {
-        let current = self.playing_index.or_else(|| self.selected_track_index());
+        let current = self
+            .playback
+            .playing_index
+            .or_else(|| self.selected_track_index());
         self.next_library_index_from(current, natural_end)
     }
 
@@ -212,13 +223,16 @@ impl App {
         natural_end: bool,
     ) -> Option<usize> {
         let mode = self.playback_mode();
-        self.order
-            .next(self.tracks.len(), current, natural_end, mode)
+        self.playback
+            .order
+            .next(self.catalog.tracks().len(), current, natural_end, mode)
     }
 
     /// 随机袋以 `current` 为本轮第一首重新洗牌。
     pub(super) fn reanchor_shuffle_bag(&mut self, current: usize) {
-        self.order.reanchor(self.tracks.len(), current);
+        self.playback
+            .order
+            .reanchor(self.catalog.tracks().len(), current);
     }
 
     pub(super) fn play_previous(&mut self) {
@@ -226,7 +240,7 @@ impl App {
             return;
         }
         let mut skipped = Vec::new();
-        while let Some(path) = self.history.pop() {
+        while let Some(path) = self.playback.history.pop() {
             match self.play_path(&path, false, BagUpdate::Reanchor) {
                 Ok(()) => {
                     self.report_skipped(&skipped);
@@ -235,7 +249,7 @@ impl App {
                 Err(skip) => skipped.push(skip),
             }
         }
-        self.message = Some(if skipped.is_empty() {
+        self.view.message = Some(if skipped.is_empty() {
             "没有上一首播放记录".to_owned()
         } else {
             no_playable_message("上一首", skipped.len())
@@ -247,30 +261,40 @@ impl App {
             return;
         };
         if next {
-            self.queue.push_front(path);
-            self.message = Some("已设为下一首".to_owned());
+            self.playback.queue.push_front(path);
+            self.view.message = Some("已设为下一首".to_owned());
         } else {
-            self.queue.push_back(path);
-            self.message = Some(format!("已加入队列，队列中共 {} 首", self.queue.len()));
+            self.playback.queue.push_back(path);
+            self.view.message = Some(format!(
+                "已加入队列，队列中共 {} 首",
+                self.playback.queue.len()
+            ));
         }
     }
 
     pub(super) fn change_volume(&mut self, delta: i8) {
         let volume = if delta.is_negative() {
-            self.player.volume().saturating_sub(delta.unsigned_abs())
+            self.playback
+                .player
+                .volume()
+                .saturating_sub(delta.unsigned_abs())
         } else {
-            self.player.volume().saturating_add(delta as u8).min(100)
+            self.playback
+                .player
+                .volume()
+                .saturating_add(delta as u8)
+                .min(100)
         };
-        self.player.set_volume(volume);
+        self.playback.player.set_volume(volume);
         self.config.volume = volume;
-        self.message = Some(format!("音量 {volume}%"));
+        self.view.message = Some(format!("音量 {volume}%"));
     }
 
     pub(super) fn toggle_mute(&mut self) {
-        let muted = !self.player.is_muted();
-        self.player.set_muted(muted);
+        let muted = !self.playback.player.is_muted();
+        self.playback.player.set_muted(muted);
         self.config.muted = muted;
-        self.message = Some(
+        self.view.message = Some(
             if muted {
                 "已静音"
             } else {
@@ -282,43 +306,50 @@ impl App {
 
     pub(super) fn cycle_repeat(&mut self) {
         self.config.repeat = self.config.repeat.next();
-        self.message = Some(format!("循环：{}", self.config.repeat.label()));
+        self.view.message = Some(format!("循环：{}", self.config.repeat.label()));
     }
 
     pub(super) fn toggle_shuffle(&mut self) {
         self.config.shuffle = !self.config.shuffle;
         if self.config.shuffle {
-            if let Some(current) = self.playing_index.or_else(|| self.selected_track_index()) {
+            if let Some(current) = self
+                .playback
+                .playing_index
+                .or_else(|| self.selected_track_index())
+            {
                 self.reanchor_shuffle_bag(current);
             }
-            self.message = Some("已开启随机播放".to_owned());
+            self.view.message = Some("已开启随机播放".to_owned());
         } else {
-            self.order.clear();
-            self.message = Some("已关闭随机播放".to_owned());
+            self.playback.order.clear();
+            self.view.message = Some("已关闭随机播放".to_owned());
         }
     }
 
     pub(super) fn toggle_or_start(&mut self) {
-        match self.player.state() {
-            PlayState::Playing => self.player.pause(),
+        match self.playback.player.state() {
+            PlayState::Playing => self.playback.player.pause(),
             PlayState::Paused | PlayState::Stopped => self.play_or_resume(),
         }
     }
 
     pub(super) fn play_or_resume(&mut self) {
-        if self.player.output_unavailable() {
-            self.player.resume();
-            self.message = Some("正在恢复音频输出…".to_owned());
+        if self.playback.player.output_unavailable() {
+            self.playback.player.resume();
+            self.view.message = Some("正在恢复音频输出…".to_owned());
             return;
         }
-        match self.player.state() {
+        match self.playback.player.state() {
             PlayState::Playing => {}
-            PlayState::Paused => self.player.resume(),
+            PlayState::Paused => self.playback.player.resume(),
             PlayState::Stopped => {
-                if let Some(index) = self.playing_index.or_else(|| self.selected_track_index())
+                if let Some(index) = self
+                    .playback
+                    .playing_index
+                    .or_else(|| self.selected_track_index())
                     && let Err(skip) = self.play_index(index, false, BagUpdate::Reanchor)
                 {
-                    self.message = Some(skip.into_message());
+                    self.view.message = Some(skip.into_message());
                 }
             }
         }
@@ -333,13 +364,14 @@ impl App {
 
     pub(super) fn toggle_visualizer(&mut self) {
         self.config.visualizer_enabled = !self.config.visualizer_enabled;
-        self.player
+        self.playback
+            .player
             .set_spectrum_enabled(self.config.visualizer_enabled);
         if self.config.visualizer_enabled {
-            self.message = Some("已开启音频频谱".to_owned());
+            self.view.message = Some("已开启音频频谱".to_owned());
         } else {
-            self.spectrum.reset_output();
-            self.message = Some("已关闭音频频谱".to_owned());
+            self.playback.spectrum.reset_output();
+            self.view.message = Some("已关闭音频频谱".to_owned());
         }
     }
 }

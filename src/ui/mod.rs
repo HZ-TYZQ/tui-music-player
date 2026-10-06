@@ -24,7 +24,6 @@ use lyrics::{draw_lyrics, lyrics_pane_width};
 pub use mouse::MouseInput;
 use now_playing::draw_now_playing;
 use overlays::draw_overlay;
-pub use text::fmt_duration;
 use visualizer::{draw_visualizer, visualizer_height};
 
 /// 上一帧的列表布局与滚动位置。
@@ -119,7 +118,7 @@ fn draw_with_theme(frame: &mut Frame, app: &App, view: &mut ViewLayout, theme: &
         return;
     }
 
-    let visualizer_height = visualizer_height(area.height, app.config.visualizer_enabled);
+    let visualizer_height = visualizer_height(area.height, app.config().visualizer_enabled);
     if visualizer_height == 0 {
         let chunks = Layout::vertical([
             Constraint::Min(6),
@@ -154,7 +153,7 @@ fn draw_top(
     theme: &Theme,
     view: &mut ViewLayout,
 ) -> bool {
-    let pane_width = lyrics_pane_width(area.width, app.config.lyrics_enabled);
+    let pane_width = lyrics_pane_width(area.width, app.config().lyrics_enabled);
     if pane_width == 0 {
         draw_library(frame, app, area, theme, &mut view.library);
         return false;
@@ -167,10 +166,10 @@ fn draw_top(
 }
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
-    let line = if app.search_active {
+    let line = if app.view().search_active {
         Line::from(vec![
             Span::styled(" / ", Style::new().fg(theme.primary).bold()),
-            Span::styled(app.search.query(), Style::new().fg(theme.primary)),
+            Span::styled(app.catalog().query(), Style::new().fg(theme.primary)),
             Span::styled("█", Style::new().fg(theme.primary)),
             Span::styled(
                 format!(
@@ -181,7 +180,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
                 Style::new().fg(theme.muted),
             ),
         ])
-    } else if let Some(message) = &app.message {
+    } else if let Some(message) = &app.view().message {
         Line::from(vec![
             Span::styled(" • ", Style::new().fg(theme.primary)),
             Span::styled(message.clone(), Style::new().fg(theme.primary)),

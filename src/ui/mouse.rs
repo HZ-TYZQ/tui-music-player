@@ -62,7 +62,7 @@ fn click(column: u16, row: u16, double: bool, view: &ViewLayout, app: &App) -> O
             Action::SelectRow(index)
         }
     };
-    if app.overlay != Overlay::None {
+    if app.view().overlay != Overlay::None {
         return view
             .overlay
             .index_at(row)
@@ -82,7 +82,7 @@ fn click(column: u16, row: u16, double: bool, view: &ViewLayout, app: &App) -> O
 }
 
 fn hovers_focused_list(column: u16, row: u16, view: &ViewLayout, app: &App) -> bool {
-    if app.overlay == Overlay::None {
+    if app.view().overlay == Overlay::None {
         view.library.contains(column, row)
     } else {
         view.overlay.contains(column, row)

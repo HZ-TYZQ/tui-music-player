@@ -12,13 +12,13 @@ impl App {
         if self.output_blocks_playback() {
             return;
         }
-        if self.player.state() == PlayState::Stopped {
+        if self.playback.player.state() == PlayState::Stopped {
             return;
         }
-        let current = duration_as_micros(self.player.position());
+        let current = duration_as_micros(self.playback.player.position());
         let requested = current.saturating_add(offset);
         if requested < 0 {
-            if self.player.seek_to(Duration::ZERO) {
+            if self.playback.player.seek_to(Duration::ZERO) {
                 self.push_seeked(Duration::ZERO);
             }
             return;
@@ -30,8 +30,8 @@ impl App {
             return;
         }
         let target = Duration::from_micros(requested as u64);
-        if self.player.seek_to(target) {
-            self.push_seeked(self.player.position());
+        if self.playback.player.seek_to(target) {
+            self.push_seeked(self.playback.player.position());
         }
     }
 
@@ -48,7 +48,7 @@ impl App {
         if self.output_blocks_playback() {
             return;
         }
-        if self.player.state() == PlayState::Stopped {
+        if self.playback.player.state() == PlayState::Stopped {
             return;
         }
         if let Some(expected) = track_id
@@ -61,29 +61,32 @@ impl App {
         {
             return;
         }
-        if self.player.seek_to(position) {
-            self.push_seeked(self.player.position());
+        if self.playback.player.seek_to(position) {
+            self.push_seeked(self.playback.player.position());
         }
     }
 
     fn effective_duration(&self) -> Option<Duration> {
-        self.player
+        self.playback
+            .player
             .duration()
             .or_else(|| self.current_track().and_then(|track| track.duration))
     }
 
     fn push_seeked(&mut self, position: Duration) {
-        self.media_events.push(MediaEvent::Seeked { position });
+        self.playback
+            .media_events
+            .push(MediaEvent::Seeked { position });
     }
 
     pub fn drain_media_events(&mut self) -> Vec<MediaEvent> {
-        std::mem::take(&mut self.media_events)
+        std::mem::take(&mut self.playback.media_events)
     }
 
     pub fn media_snapshot(&self) -> MediaSnapshot {
         let track = self.current_track();
         MediaSnapshot {
-            status: self.player.state(),
+            status: self.playback.player.state(),
             title: track
                 .map(|track| track.display_title().to_owned())
                 .unwrap_or_default(),
@@ -91,30 +94,33 @@ impl App {
             album: track.and_then(|track| track.album.clone()),
             path: track.map(|track| track.path.clone()),
             duration: self.effective_duration(),
-            position: self.player.position(),
-            volume: self.player.volume(),
-            muted: self.player.is_muted(),
+            position: self.playback.player.position(),
+            volume: self.playback.player.volume(),
+            muted: self.playback.player.is_muted(),
             repeat: self.config.repeat,
             shuffle: self.config.shuffle,
-            can_go_previous: !self.history.is_empty(),
+            can_go_previous: !self.playback.history.is_empty(),
             can_go_next: self.can_go_next(),
             track_id: self.current_track_id(),
         }
     }
 
     fn current_track_id(&self) -> String {
-        match self.playing_index {
+        match self.playback.playing_index {
             Some(index) => format!("/org/mpris/MediaPlayer2/Track/{index}"),
             None => "/org/mpris/MediaPlayer2/TrackList/NoTrack".to_owned(),
         }
     }
 
     fn can_go_next(&self) -> bool {
-        if !self.queue.is_empty() {
+        if !self.playback.queue.is_empty() {
             return true;
         }
-        self.order
-            .has_next(self.tracks.len(), self.playing_index, self.playback_mode())
+        self.playback.order.has_next(
+            self.catalog.tracks().len(),
+            self.playback.playing_index,
+            self.playback_mode(),
+        )
     }
 }
 

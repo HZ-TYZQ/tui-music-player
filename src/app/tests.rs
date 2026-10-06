@@ -64,9 +64,9 @@ fn mouse(app: &mut App, input: &mut MouseInput, event: MouseEvent, view: &ViewLa
 fn settle_search_and_selection(app: &mut App) {
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
-        app.search.tick();
+        app.catalog.tick_search();
         app.restore_pending_selection();
-        if !app.search.is_running() && app.pending_selected_path.is_none() {
+        if !app.catalog.search_running() && app.view.pending_selected_path.is_none() {
             return;
         }
         std::thread::sleep(Duration::from_millis(1));
@@ -77,10 +77,12 @@ fn settle_search_and_selection(app: &mut App) {
 #[test]
 fn playback_modes_choose_expected_library_index() {
     let (_temp, mut app) = test_app(AppConfig::default());
-    app.tracks = (0..3)
-        .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
-        .collect();
-    app.playing_index = Some(2);
+    app.catalog.set_tracks(
+        (0..3)
+            .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
+            .collect(),
+    );
+    app.playback.playing_index = Some(2);
 
     app.config.repeat = RepeatMode::None;
     app.config.shuffle = false;
@@ -97,11 +99,10 @@ fn immediate_play_does_not_clear_manual_queue() {
     let (_temp, mut app) = test_app(AppConfig::default());
     let selected = PathBuf::from("/missing/selected.wav");
     let queued = PathBuf::from("/music/queued.wav");
-    app.tracks = vec![track(selected)];
-    app.search.replace_tracks(&app.tracks);
-    app.queue.push_back(queued.clone());
+    app.catalog.set_tracks(vec![track(selected)]);
+    app.playback.queue.push_back(queued.clone());
     app.play_selected();
-    assert_eq!(app.queue.front(), Some(&queued));
+    assert_eq!(app.playback.queue.front(), Some(&queued));
 }
 
 #[test]
@@ -114,16 +115,25 @@ fn sequential_next_skips_a_broken_track_without_polluting_history() {
     write_test_wav(&first);
     std::fs::write(&broken, b"not audio").unwrap();
     write_test_wav(&third);
-    app.tracks = vec![track(first.clone()), track(broken), track(third.clone())];
-    app.search.replace_tracks(&app.tracks);
-    app.playing_index = Some(0);
+    app.catalog.set_tracks(vec![
+        track(first.clone()),
+        track(broken),
+        track(third.clone()),
+    ]);
+    app.playback.playing_index = Some(0);
 
     app.play_next(false);
 
-    assert_eq!(app.playing_index, Some(2));
-    let current_path = app.player.current_path().unwrap().canonicalize().unwrap();
+    assert_eq!(app.playback.playing_index, Some(2));
+    let current_path = app
+        .playback
+        .player
+        .current_path()
+        .unwrap()
+        .canonicalize()
+        .unwrap();
     assert_eq!(current_path, third.canonicalize().unwrap());
-    assert_eq!(app.history, vec![first]);
+    assert_eq!(app.playback.history, vec![first]);
 }
 
 #[test]
@@ -132,9 +142,9 @@ fn rescan_preserves_selected_track_by_path() {
     let paths: Vec<PathBuf> = (0..4)
         .map(|index| PathBuf::from(format!("/music/{index}.wav")))
         .collect();
-    app.tracks = paths.iter().map(|path| track(path.clone())).collect();
-    app.search.replace_tracks(&app.tracks);
-    app.selected = 2;
+    app.catalog
+        .set_tracks(paths.iter().map(|path| track(path.clone())).collect());
+    app.view.selected = 2;
 
     // 曲库会按配置排序，扫描顺序不再能制造位移；用少一首曲目让下标真正错位。
     let rescanned: Vec<Track> = [0, 2, 3]
@@ -143,7 +153,7 @@ fn rescan_preserves_selected_track_by_path() {
         .collect();
     app.apply_scan_finished(rescanned, Vec::new());
 
-    assert_eq!(app.selected, 1);
+    assert_eq!(app.view.selected, 1);
     assert_eq!(
         app.selected_track().map(|track| track.path.clone()),
         Some(paths[2].clone())
@@ -156,12 +166,12 @@ fn rescan_preserves_selected_track_after_active_search_settles() {
     let paths: Vec<PathBuf> = (0..4)
         .map(|index| PathBuf::from(format!("/music/{index}.wav")))
         .collect();
-    app.tracks = paths.iter().map(|path| track(path.clone())).collect();
-    app.search.replace_tracks(&app.tracks);
-    app.search.set_query("Song".to_owned());
+    app.catalog
+        .set_tracks(paths.iter().map(|path| track(path.clone())).collect());
+    app.catalog.set_query("Song".to_owned());
     settle_search_and_selection(&mut app);
     assert_eq!(app.visible_indices(), &[0, 1, 2, 3]);
-    app.selected = 2;
+    app.view.selected = 2;
 
     // 2.wav 重扫后位于可见结果第 1 项，确保错误回退到第 0 项无法通过测试。
     let rescanned: Vec<Track> = [0, 2, 3]
@@ -171,7 +181,7 @@ fn rescan_preserves_selected_track_after_active_search_settles() {
     app.apply_scan_finished(rescanned, Vec::new());
     settle_search_and_selection(&mut app);
 
-    assert_eq!(app.selected, 1);
+    assert_eq!(app.view.selected, 1);
     assert_eq!(
         app.selected_track().map(|track| track.path.clone()),
         Some(paths[2].clone())
@@ -187,9 +197,8 @@ fn rescan_falls_back_to_first_match_when_selected_track_stops_matching() {
     first.title = "Other".to_owned();
     let mut selected = track(selected_path.clone());
     selected.title = "Favorite".to_owned();
-    app.tracks = vec![first, selected];
-    app.search.replace_tracks(&app.tracks);
-    app.search.set_query("Favorite".to_owned());
+    app.catalog.set_tracks(vec![first, selected]);
+    app.catalog.set_query("Favorite".to_owned());
     settle_search_and_selection(&mut app);
     assert_eq!(
         app.selected_track().map(|track| &track.path),
@@ -203,7 +212,7 @@ fn rescan_falls_back_to_first_match_when_selected_track_stops_matching() {
     app.apply_scan_finished(vec![replacement_match, replacement_selected], Vec::new());
     settle_search_and_selection(&mut app);
 
-    assert_eq!(app.selected, 0);
+    assert_eq!(app.view.selected, 0);
     assert_eq!(
         app.selected_track().map(|track| &track.path),
         Some(&first_path)
@@ -213,21 +222,22 @@ fn rescan_falls_back_to_first_match_when_selected_track_stops_matching() {
 #[test]
 fn user_actions_cancel_pending_selection_restore() {
     let (_temp, mut app) = test_app(AppConfig::default());
-    app.tracks = (0..3)
-        .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
-        .collect();
-    app.search.replace_tracks(&app.tracks);
+    app.catalog.set_tracks(
+        (0..3)
+            .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
+            .collect(),
+    );
 
-    app.pending_selected_path = Some(app.tracks[2].path.clone());
+    app.view.pending_selected_path = Some(app.catalog.tracks()[2].path.clone());
     app.select_next();
-    assert_eq!(app.selected, 1);
-    assert!(app.pending_selected_path.is_none());
+    assert_eq!(app.view.selected, 1);
+    assert!(app.view.pending_selected_path.is_none());
 
-    app.pending_selected_path = Some(app.tracks[2].path.clone());
-    app.selected = 2;
+    app.view.pending_selected_path = Some(app.catalog.tracks()[2].path.clone());
+    app.view.selected = 2;
     app.select_previous();
-    assert_eq!(app.selected, 1);
-    assert!(app.pending_selected_path.is_none());
+    assert_eq!(app.view.selected, 1);
+    assert!(app.view.pending_selected_path.is_none());
 
     for action in [
         Action::InputChar('x'),
@@ -235,30 +245,31 @@ fn user_actions_cancel_pending_selection_restore() {
         Action::Back,
         Action::Activate,
     ] {
-        app.search_active = true;
-        app.pending_selected_path = Some(app.tracks[2].path.clone());
+        app.view.search_active = true;
+        app.view.pending_selected_path = Some(app.catalog.tracks()[2].path.clone());
         app.dispatch(action);
-        assert!(app.pending_selected_path.is_none());
+        assert!(app.view.pending_selected_path.is_none());
     }
 }
 
 #[test]
 fn rescan_resets_selection_when_selected_track_disappears() {
     let (_temp, mut app) = test_app(AppConfig::default());
-    app.tracks = (0..3)
-        .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
-        .collect();
-    app.search.replace_tracks(&app.tracks);
-    app.selected = 2;
+    app.catalog.set_tracks(
+        (0..3)
+            .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
+            .collect(),
+    );
+    app.view.selected = 2;
 
     app.apply_scan_finished(vec![track(PathBuf::from("/music/new.wav"))], Vec::new());
 
-    assert_eq!(app.selected, 0);
+    assert_eq!(app.view.selected, 0);
     assert_eq!(
         app.selected_track().map(|track| track.path.clone()),
         Some(PathBuf::from("/music/new.wav"))
     );
-    assert_eq!(app.playing_index, None);
+    assert_eq!(app.playback.playing_index, None);
 }
 
 #[test]
@@ -268,10 +279,12 @@ fn shuffle_does_not_immediately_repeat_current_track() {
         ..AppConfig::default()
     };
     let (_temp, mut app) = test_app(config);
-    app.tracks = (0..4)
-        .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
-        .collect();
-    app.playing_index = Some(2);
+    app.catalog.set_tracks(
+        (0..4)
+            .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
+            .collect(),
+    );
+    app.playback.playing_index = Some(2);
     app.reanchor_shuffle_bag(2);
     for _ in 0..3 {
         assert_ne!(app.next_library_index(true), Some(2));
@@ -314,10 +327,12 @@ fn shuffle_bag_exhausts_then_stops_without_repeat() {
         ..AppConfig::default()
     };
     let (_temp, mut app) = test_app(config);
-    app.tracks = (0..3)
-        .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
-        .collect();
-    app.playing_index = Some(0);
+    app.catalog.set_tracks(
+        (0..3)
+            .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
+            .collect(),
+    );
+    app.playback.playing_index = Some(0);
     app.reanchor_shuffle_bag(0);
     let mut seen = vec![0];
     while let Some(next) = app.next_library_index(true) {
@@ -339,18 +354,20 @@ fn shuffle_repeat_all_reshuffles_after_bag() {
         ..AppConfig::default()
     };
     let (_temp, mut app) = test_app(config);
-    app.tracks = (0..3)
-        .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
-        .collect();
-    app.playing_index = Some(0);
+    app.catalog.set_tracks(
+        (0..3)
+            .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
+            .collect(),
+    );
+    app.playback.playing_index = Some(0);
     app.reanchor_shuffle_bag(0);
     for _ in 0..2 {
         assert!(app.next_library_index(true).is_some());
     }
     let first_of_next_round = app.next_library_index(true);
     assert!(first_of_next_round.is_some());
-    assert_eq!(app.order.cursor(), 1);
-    assert_eq!(app.order.bag().len(), 3);
+    assert_eq!(app.playback.order.cursor(), 1);
+    assert_eq!(app.playback.order.bag().len(), 3);
 }
 
 #[test]
@@ -375,39 +392,42 @@ fn visualizer_toggle_updates_persisted_setting() {
 #[test]
 fn visualizer_key_does_not_escape_search_or_overlay_modes() {
     let (_temp, mut app) = test_app(AppConfig::default());
-    app.search_active = true;
+    app.view.search_active = true;
     press(
         &mut app,
         KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
     );
     assert!(app.config.visualizer_enabled);
-    assert_eq!(app.search.query(), "v");
+    assert_eq!(app.catalog.query(), "v");
 
-    app.search_active = false;
-    app.overlay = Overlay::Help;
+    app.view.search_active = false;
+    app.view.overlay = Overlay::Help;
     press(
         &mut app,
         KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
     );
     assert!(app.config.visualizer_enabled);
-    assert_eq!(app.overlay, Overlay::Help);
+    assert_eq!(app.view.overlay, Overlay::Help);
 }
 
 #[test]
-fn duration_column_width_follows_the_longest_track_duration() {
+fn the_catalog_tracks_the_longest_duration_across_rescans() {
     let (_temp, mut app) = test_app(AppConfig::default());
-    assert_eq!(app.duration_column_width, 5);
+    assert_eq!(app.catalog.longest_duration(), None);
 
     app.apply_scan_finished(vec![track(PathBuf::from("/music/a.wav"))], Vec::new());
-    assert_eq!(app.duration_column_width, 5);
+    assert_eq!(app.catalog.longest_duration(), Some(Duration::from_secs(1)));
 
     let mut long = track(PathBuf::from("/music/long.wav"));
     long.duration = Some(Duration::from_secs(3_661));
     app.apply_scan_finished(vec![long], Vec::new());
-    assert_eq!(app.duration_column_width, 7);
+    assert_eq!(
+        app.catalog.longest_duration(),
+        Some(Duration::from_secs(3_661))
+    );
 
     app.apply_scan_finished(Vec::new(), Vec::new());
-    assert_eq!(app.duration_column_width, 5);
+    assert_eq!(app.catalog.longest_duration(), None);
 }
 
 #[test]
@@ -416,30 +436,30 @@ fn queue_panel_edits_reorder_remove_and_clear_the_queue() {
     let paths: Vec<PathBuf> = (0..3)
         .map(|index| PathBuf::from(format!("/music/{index}.wav")))
         .collect();
-    app.queue = paths.iter().cloned().collect();
+    app.playback.queue = paths.iter().cloned().collect();
 
     press(
         &mut app,
         KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::NONE),
     );
-    assert_eq!(app.overlay, Overlay::Queue);
+    assert_eq!(app.view.overlay, Overlay::Queue);
 
     // J 把首项下移一位，选择跟着它走。
     press(
         &mut app,
         KeyEvent::new(KeyCode::Char('J'), KeyModifiers::NONE),
     );
-    assert_eq!(app.queue_selected, 1);
-    assert_eq!(app.queue[0], paths[1]);
-    assert_eq!(app.queue[1], paths[0]);
+    assert_eq!(app.view.queue_selected, 1);
+    assert_eq!(app.playback.queue[0], paths[1]);
+    assert_eq!(app.playback.queue[1], paths[0]);
 
     // K 移回原位。
     press(
         &mut app,
         KeyEvent::new(KeyCode::Char('K'), KeyModifiers::NONE),
     );
-    assert_eq!(app.queue_selected, 0);
-    assert_eq!(app.queue[0], paths[0]);
+    assert_eq!(app.view.queue_selected, 0);
+    assert_eq!(app.playback.queue[0], paths[0]);
 
     press(
         &mut app,
@@ -449,36 +469,36 @@ fn queue_panel_edits_reorder_remove_and_clear_the_queue() {
         &mut app,
         KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
     );
-    assert_eq!(app.queue.len(), 2);
-    assert_eq!(app.queue[1], paths[2]);
+    assert_eq!(app.playback.queue.len(), 2);
+    assert_eq!(app.playback.queue[1], paths[2]);
 
     press(
         &mut app,
         KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
     );
-    assert!(app.queue.is_empty());
-    assert_eq!(app.queue_selected, 0);
+    assert!(app.playback.queue.is_empty());
+    assert_eq!(app.view.queue_selected, 0);
 
     press(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    assert_eq!(app.overlay, Overlay::None);
+    assert_eq!(app.view.overlay, Overlay::None);
 }
 
 #[test]
 fn queue_selection_stays_in_range_when_the_last_entry_is_removed() {
     let (_temp, mut app) = test_app(AppConfig::default());
-    app.queue = (0..2)
+    app.playback.queue = (0..2)
         .map(|index| PathBuf::from(format!("/music/{index}.wav")))
         .collect();
-    app.overlay = Overlay::Queue;
-    app.queue_selected = 1;
+    app.view.overlay = Overlay::Queue;
+    app.view.queue_selected = 1;
 
     press(
         &mut app,
         KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
     );
 
-    assert_eq!(app.queue.len(), 1);
-    assert_eq!(app.queue_selected, 0);
+    assert_eq!(app.playback.queue.len(), 1);
+    assert_eq!(app.view.queue_selected, 0);
 }
 
 #[test]
@@ -491,32 +511,37 @@ fn playing_a_queue_entry_drops_the_entries_before_it() {
     write_test_wav(&skipped);
     write_test_wav(&wanted);
     write_test_wav(&rest);
-    app.tracks = vec![
+    app.catalog.set_tracks(vec![
         track(skipped.clone()),
         track(wanted.clone()),
         track(rest.clone()),
-    ];
-    app.search.replace_tracks(&app.tracks);
-    app.queue = vec![skipped, wanted.clone(), rest.clone()].into();
-    app.overlay = Overlay::Queue;
-    app.queue_selected = 1;
+    ]);
+    app.playback.queue = vec![skipped, wanted.clone(), rest.clone()].into();
+    app.view.overlay = Overlay::Queue;
+    app.view.queue_selected = 1;
 
     press(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
-    assert_eq!(app.overlay, Overlay::None);
-    assert_eq!(app.playing_index, Some(1));
-    let current_path = app.player.current_path().unwrap().canonicalize().unwrap();
+    assert_eq!(app.view.overlay, Overlay::None);
+    assert_eq!(app.playback.playing_index, Some(1));
+    let current_path = app
+        .playback
+        .player
+        .current_path()
+        .unwrap()
+        .canonicalize()
+        .unwrap();
     assert_eq!(current_path, wanted.canonicalize().unwrap());
-    assert_eq!(app.queue.len(), 1);
-    assert_eq!(app.queue.front(), Some(&rest));
+    assert_eq!(app.playback.queue.len(), 1);
+    assert_eq!(app.playback.queue.front(), Some(&rest));
 }
 
 #[test]
 fn queue_keys_do_not_leak_to_the_library_while_the_panel_is_open() {
     let (_temp, mut app) = test_app(AppConfig::default());
-    app.tracks = vec![track(PathBuf::from("/music/a.wav"))];
-    app.search.replace_tracks(&app.tracks);
-    app.overlay = Overlay::Queue;
+    app.catalog
+        .set_tracks(vec![track(PathBuf::from("/music/a.wav"))]);
+    app.view.overlay = Overlay::Queue;
 
     // c 在曲库里没有绑定，但 q 会退出程序、s 会切随机，都必须被弹层吃掉。
     press(
@@ -530,7 +555,7 @@ fn queue_keys_do_not_leak_to_the_library_while_the_panel_is_open() {
 
     assert!(!app.should_quit);
     assert!(!app.config.shuffle);
-    assert_eq!(app.overlay, Overlay::Queue);
+    assert_eq!(app.view.overlay, Overlay::Queue);
 }
 
 #[test]
@@ -548,15 +573,16 @@ fn queue_panel_right_aligns_durations_and_keeps_every_entry_visible() {
     // 覆盖三种排版分支：缺歌手、标题短到留白多、路径已不在曲库中。
     tracks[3].artist = None;
     tracks[4].title = "Short".to_owned();
-    app.tracks = tracks;
+    app.catalog.set_tracks(tracks);
     let missing = PathBuf::from("/gone/不在库里的一首歌.flac");
-    app.queue = app
-        .tracks
+    app.playback.queue = app
+        .catalog
+        .tracks()
         .iter()
         .map(|track| track.path.clone())
         .chain(std::iter::once(missing))
         .collect();
-    app.overlay = Overlay::Queue;
+    app.view.overlay = Overlay::Queue;
 
     let backend = ratatui::backend::TestBackend::new(100, 22);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
@@ -619,15 +645,15 @@ fn skipping_a_broken_track_leaves_a_notice_after_the_next_track_starts() {
     write_test_wav(&good);
     let mut broken_track = track(broken);
     broken_track.title = "坏文件".to_owned();
-    app.tracks = vec![track(first), broken_track, track(good)];
-    app.search.replace_tracks(&app.tracks);
-    app.playing_index = Some(0);
+    app.catalog
+        .set_tracks(vec![track(first), broken_track, track(good)]);
+    app.playback.playing_index = Some(0);
 
     app.play_next(false);
 
     // 成功切歌会清空 message，跳过原因必须在那之后重新写回来。
-    assert_eq!(app.playing_index, Some(2));
-    let message = app.message.clone().expect("跳过提示丢失");
+    assert_eq!(app.playback.playing_index, Some(2));
+    let message = app.view.message.clone().expect("跳过提示丢失");
     assert!(message.contains("已跳过"), "{message}");
     assert!(message.contains("坏文件"), "{message}");
 }
@@ -644,19 +670,18 @@ fn several_skips_in_one_advance_collapse_into_a_counted_notice() {
         std::fs::write(&path, b"not audio").unwrap();
         broken.push(path);
     }
-    app.tracks = vec![
+    app.catalog.set_tracks(vec![
         track(music.join("start.wav")),
         track(broken[0].clone()),
         track(broken[1].clone()),
         track(good),
-    ];
-    app.search.replace_tracks(&app.tracks);
-    app.playing_index = Some(0);
+    ]);
+    app.playback.playing_index = Some(0);
 
     app.play_next(false);
 
-    assert_eq!(app.playing_index, Some(3));
-    let message = app.message.clone().expect("跳过提示丢失");
+    assert_eq!(app.playback.playing_index, Some(3));
+    let message = app.view.message.clone().expect("跳过提示丢失");
     assert!(message.starts_with("已跳过 2 首"), "{message}");
 }
 
@@ -666,17 +691,16 @@ fn a_queue_entry_missing_from_the_library_is_named_in_the_notice() {
     let music = temp.path().join("music");
     let good = music.join("c.wav");
     write_test_wav(&good);
-    app.tracks = vec![track(good)];
-    app.search.replace_tracks(&app.tracks);
-    app.queue = vec![PathBuf::from("/gone/不在库里.flac")].into();
-    app.overlay = Overlay::Queue;
+    app.catalog.set_tracks(vec![track(good)]);
+    app.playback.queue = vec![PathBuf::from("/gone/不在库里.flac")].into();
+    app.view.overlay = Overlay::Queue;
     // 列表循环让“下一首”与光标是否已经落到曲库上无关，避免依赖搜索线程的时序。
     app.config.repeat = RepeatMode::All;
 
     press(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
-    assert_eq!(app.playing_index, Some(0));
-    let message = app.message.clone().expect("跳过提示丢失");
+    assert_eq!(app.playback.playing_index, Some(0));
+    let message = app.view.message.clone().expect("跳过提示丢失");
     assert!(message.contains("不在库里.flac"), "{message}");
     assert!(message.contains("不在曲库中"), "{message}");
 }
@@ -688,13 +712,12 @@ fn playing_a_track_directly_reports_the_failure_instead_of_a_skip() {
     std::fs::write(&broken, b"not audio").unwrap();
     let mut broken_track = track(broken);
     broken_track.title = "坏文件".to_owned();
-    app.tracks = vec![broken_track];
-    app.search.replace_tracks(&app.tracks);
+    app.catalog.set_tracks(vec![broken_track]);
 
     app.play_selected();
 
-    assert_eq!(app.playing_index, None);
-    let message = app.message.clone().expect("失败提示丢失");
+    assert_eq!(app.playback.playing_index, None);
+    let message = app.view.message.clone().expect("失败提示丢失");
     assert!(message.starts_with("无法播放“坏文件”"), "{message}");
 }
 
@@ -703,14 +726,13 @@ fn a_clean_track_change_still_clears_the_previous_message() {
     let (temp, mut app) = test_app(AppConfig::default());
     let good = temp.path().join("music").join("a.wav");
     write_test_wav(&good);
-    app.tracks = vec![track(good)];
-    app.search.replace_tracks(&app.tracks);
-    app.message = Some("音量 50%".to_owned());
+    app.catalog.set_tracks(vec![track(good)]);
+    app.view.message = Some("音量 50%".to_owned());
 
     app.play_selected();
 
-    assert_eq!(app.playing_index, Some(0));
-    assert_eq!(app.message, None);
+    assert_eq!(app.playback.playing_index, Some(0));
+    assert_eq!(app.view.message, None);
 }
 
 #[test]
@@ -749,14 +771,13 @@ fn a_rescan_keeps_the_playing_track_when_the_library_path_is_not_canonical() {
 
     let path = link.join("a.wav");
     assert_ne!(path, path.canonicalize().unwrap());
-    app.tracks = vec![track(path.clone())];
-    app.search.replace_tracks(&app.tracks);
+    app.catalog.set_tracks(vec![track(path.clone())]);
     app.play_index(0, false, BagUpdate::Reanchor).unwrap();
-    assert_eq!(app.player.current_path(), Some(path.as_path()));
+    assert_eq!(app.playback.player.current_path(), Some(path.as_path()));
 
     app.replace_tracks(vec![track(path)]);
 
-    assert_eq!(app.playing_index, Some(0));
+    assert_eq!(app.playback.playing_index, Some(0));
 }
 
 fn titled_track(path: PathBuf, title: &str) -> Track {
@@ -775,12 +796,11 @@ fn sort_fixture(app: &mut App, music: &Path) -> Vec<PathBuf> {
     for path in &paths {
         write_test_wav(path);
     }
-    app.tracks = vec![
+    app.catalog.set_tracks(vec![
         titled_track(paths[0].clone(), "zeta"),
         titled_track(paths[1].clone(), "alpha"),
         titled_track(paths[2].clone(), "mid"),
-    ];
-    app.search.replace_tracks(&app.tracks);
+    ]);
     paths
 }
 
@@ -789,7 +809,7 @@ fn cycling_the_sort_key_reorders_the_library_and_keeps_the_playing_track() {
     let (temp, mut app) = test_app(AppConfig::default());
     let paths = sort_fixture(&mut app, &temp.path().join("music"));
     app.play_index(0, false, BagUpdate::Reanchor).unwrap();
-    assert_eq!(app.playing_index, Some(0));
+    assert_eq!(app.playback.playing_index, Some(0));
 
     press(
         &mut app,
@@ -798,15 +818,21 @@ fn cycling_the_sort_key_reorders_the_library_and_keeps_the_playing_track() {
 
     assert_eq!(app.config.sort.key, SortKey::Title);
     let order: Vec<&str> = app
-        .tracks
+        .catalog
+        .tracks()
         .iter()
         .map(|track| track.title.as_str())
         .collect();
     assert_eq!(order, ["alpha", "mid", "zeta"]);
     // 正在播放的是同一个文件，只是它在列表里的位置变了。
-    assert_eq!(app.playing_index, Some(2));
+    assert_eq!(app.playback.playing_index, Some(2));
     assert_eq!(
-        app.player.current_path().unwrap().canonicalize().unwrap(),
+        app.playback
+            .player
+            .current_path()
+            .unwrap()
+            .canonicalize()
+            .unwrap(),
         paths[0].canonicalize().unwrap()
     );
 }
@@ -824,12 +850,13 @@ fn toggling_the_sort_direction_reverses_the_library() {
 
     assert!(app.config.sort.descending);
     let order: Vec<&str> = app
-        .tracks
+        .catalog
+        .tracks()
         .iter()
         .map(|track| track.title.as_str())
         .collect();
     assert_eq!(order, ["zeta", "mid", "alpha"]);
-    assert!(app.message.as_deref().unwrap().contains("标题 ↓"));
+    assert!(app.view.message.as_deref().unwrap().contains("标题 ↓"));
 }
 
 #[test]
@@ -845,10 +872,13 @@ fn resorting_reanchors_the_shuffle_bag_onto_the_new_indices() {
     );
 
     // 重排让所有下标失效，随机袋必须重建到新下标上，并从当前曲目开始。
-    assert_eq!(app.order.bag().first().copied(), app.playing_index);
-    let mut covered = app.order.bag().to_vec();
+    assert_eq!(
+        app.playback.order.bag().first().copied(),
+        app.playback.playing_index
+    );
+    let mut covered = app.playback.order.bag().to_vec();
     covered.sort_unstable();
-    assert_eq!(covered, (0..app.tracks.len()).collect::<Vec<_>>());
+    assert_eq!(covered, (0..app.catalog.tracks().len()).collect::<Vec<_>>());
 }
 
 #[test]
@@ -865,7 +895,8 @@ fn a_rescan_applies_the_configured_sort() {
     );
 
     let order: Vec<&str> = app
-        .tracks
+        .catalog
+        .tracks()
         .iter()
         .map(|track| track.title.as_str())
         .collect();
@@ -912,23 +943,23 @@ fn clicking_a_library_row_selects_it_and_double_click_plays_it() {
     for path in &paths {
         write_test_wav(path);
     }
-    app.tracks = paths.iter().map(|path| track(path.clone())).collect();
-    app.search.replace_tracks(&app.tracks);
+    app.catalog
+        .set_tracks(paths.iter().map(|path| track(path.clone())).collect());
     settle_search_and_selection(&mut app);
 
     // 曲库列表从第 1 行开始（第 0 行是边框），每首两行，因此第 5、6 行是第 3 首。
     let (view, _) = render(&app, 90, 24);
     let mut input = MouseInput::default();
     mouse(&mut app, &mut input, click(10, 6), &view);
-    assert_eq!(app.selected, 2);
-    assert_eq!(app.playing_index, None);
+    assert_eq!(app.view.selected, 2);
+    assert_eq!(app.playback.playing_index, None);
 
     mouse(&mut app, &mut input, click(10, 6), &view);
-    assert_eq!(app.playing_index, Some(2));
+    assert_eq!(app.playback.playing_index, Some(2));
 
     // 点标题行同样算这一首。
     mouse(&mut app, &mut input, click(10, 3), &view);
-    assert_eq!(app.selected, 1);
+    assert_eq!(app.view.selected, 1);
 }
 
 #[test]
@@ -938,11 +969,12 @@ fn two_clicks_on_different_rows_are_not_a_double_click() {
     for name in ["a.wav", "b.wav"] {
         write_test_wav(&music.join(name));
     }
-    app.tracks = ["a.wav", "b.wav"]
-        .iter()
-        .map(|name| track(music.join(name)))
-        .collect();
-    app.search.replace_tracks(&app.tracks);
+    app.catalog.set_tracks(
+        ["a.wav", "b.wav"]
+            .iter()
+            .map(|name| track(music.join(name)))
+            .collect(),
+    );
     settle_search_and_selection(&mut app);
 
     let (view, _) = render(&app, 90, 24);
@@ -951,8 +983,8 @@ fn two_clicks_on_different_rows_are_not_a_double_click() {
     mouse(&mut app, &mut input, click(10, 1), &view);
     mouse(&mut app, &mut input, click(10, 3), &view);
 
-    assert_eq!(app.selected, 1);
-    assert_eq!(app.playing_index, None);
+    assert_eq!(app.view.selected, 1);
+    assert_eq!(app.playback.playing_index, None);
 }
 
 #[test]
@@ -960,8 +992,7 @@ fn clicks_below_the_last_row_and_outside_the_list_are_ignored() {
     let (temp, mut app) = test_app(AppConfig::default());
     let music = temp.path().join("music");
     write_test_wav(&music.join("a.wav"));
-    app.tracks = vec![track(music.join("a.wav"))];
-    app.search.replace_tracks(&app.tracks);
+    app.catalog.set_tracks(vec![track(music.join("a.wav"))]);
     settle_search_and_selection(&mut app);
 
     let (view, _) = render(&app, 90, 24);
@@ -970,12 +1001,12 @@ fn clicks_below_the_last_row_and_outside_the_list_are_ignored() {
     // 列表里只有一首，下面全是空行；点空行不应该改变选中项，也不应该 panic。
     mouse(&mut app, &mut input, click(10, 6), &view);
     mouse(&mut app, &mut input, click(10, 6), &view);
-    assert_eq!(app.selected, 0);
-    assert_eq!(app.playing_index, None);
+    assert_eq!(app.view.selected, 0);
+    assert_eq!(app.playback.playing_index, None);
 
     // 边框列同样在列表区域之外。
     mouse(&mut app, &mut input, click(0, 1), &view);
-    assert_eq!(app.playing_index, None);
+    assert_eq!(app.playback.playing_index, None);
 }
 
 #[test]
@@ -985,8 +1016,7 @@ fn clicking_the_progress_bar_seeks_within_the_current_track() {
     write_long_test_wav(&long);
     let mut item = track(long.clone());
     item.duration = Some(Duration::from_secs(100));
-    app.tracks = vec![item];
-    app.search.replace_tracks(&app.tracks);
+    app.catalog.set_tracks(vec![item]);
     app.play_index(0, false, BagUpdate::Reanchor).unwrap();
 
     let (view, _) = render(&app, 90, 24);
@@ -1000,7 +1030,7 @@ fn clicking_the_progress_bar_seeks_within_the_current_track() {
         &view,
     );
 
-    let position = app.player.position();
+    let position = app.playback.player.position();
     assert!(
         position >= Duration::from_secs(40) && position <= Duration::from_secs(60),
         "点击进度条中点后位置是 {position:?}"
@@ -1014,15 +1044,14 @@ fn digit_keys_jump_to_tenths_of_the_track() {
     write_long_test_wav(&long);
     let mut item = track(long.clone());
     item.duration = Some(Duration::from_secs(100));
-    app.tracks = vec![item];
-    app.search.replace_tracks(&app.tracks);
+    app.catalog.set_tracks(vec![item]);
     app.play_index(0, false, BagUpdate::Reanchor).unwrap();
 
     press(
         &mut app,
         KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE),
     );
-    let position = app.player.position();
+    let position = app.playback.player.position();
     assert!(
         position >= Duration::from_secs(45) && position <= Duration::from_secs(55),
         "按 5 后位置是 {position:?}"
@@ -1032,7 +1061,7 @@ fn digit_keys_jump_to_tenths_of_the_track() {
         &mut app,
         KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE),
     );
-    assert!(app.player.position() < Duration::from_secs(5));
+    assert!(app.playback.player.position() < Duration::from_secs(5));
 }
 
 #[test]
@@ -1042,12 +1071,11 @@ fn long_seek_moves_a_minute_with_shift_arrows_or_uppercase_keys() {
     write_long_test_wav(&long);
     let mut item = track(long.clone());
     item.duration = Some(Duration::from_secs(100));
-    app.tracks = vec![item];
-    app.search.replace_tracks(&app.tracks);
+    app.catalog.set_tracks(vec![item]);
     app.play_index(0, false, BagUpdate::Reanchor).unwrap();
 
     press(&mut app, KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
-    let position = app.player.position();
+    let position = app.playback.player.position();
     assert!(
         position >= Duration::from_secs(60) && position <= Duration::from_secs(65),
         "Shift+→ 后位置是 {position:?}"
@@ -1057,13 +1085,13 @@ fn long_seek_moves_a_minute_with_shift_arrows_or_uppercase_keys() {
         &mut app,
         KeyEvent::new(KeyCode::Char('H'), KeyModifiers::SHIFT),
     );
-    assert!(app.player.position() < Duration::from_secs(5));
+    assert!(app.playback.player.position() < Duration::from_secs(5));
 
     press(
         &mut app,
         KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT),
     );
-    let position = app.player.position();
+    let position = app.playback.player.position();
     assert!(
         position >= Duration::from_secs(60) && position <= Duration::from_secs(65),
         "L 后位置是 {position:?}"
@@ -1071,7 +1099,7 @@ fn long_seek_moves_a_minute_with_shift_arrows_or_uppercase_keys() {
 
     // 普通方向键仍是 10 秒。
     press(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
-    let position = app.player.position();
+    let position = app.playback.player.position();
     assert!(
         position >= Duration::from_secs(50) && position <= Duration::from_secs(55),
         "← 后位置是 {position:?}"
@@ -1089,7 +1117,7 @@ fn bracket_keys_adjust_volume_by_one_percent() {
         &mut app,
         KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE),
     );
-    assert_eq!(app.player.volume(), 51);
+    assert_eq!(app.playback.player.volume(), 51);
     press(
         &mut app,
         KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE),
@@ -1098,17 +1126,18 @@ fn bracket_keys_adjust_volume_by_one_percent() {
         &mut app,
         KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE),
     );
-    assert_eq!(app.player.volume(), 49);
+    assert_eq!(app.playback.player.volume(), 49);
     assert_eq!(app.config.volume, 49);
 }
 
 #[test]
 fn the_wheel_moves_the_selection_inside_the_hovered_list() {
     let (_temp, mut app) = test_app(AppConfig::default());
-    app.tracks = (0..20)
-        .map(|index| track(PathBuf::from(format!("/music/{index:02}.wav"))))
-        .collect();
-    app.search.replace_tracks(&app.tracks);
+    app.catalog.set_tracks(
+        (0..20)
+            .map(|index| track(PathBuf::from(format!("/music/{index:02}.wav"))))
+            .collect(),
+    );
     settle_search_and_selection(&mut app);
 
     let (view, _) = render(&app, 90, 24);
@@ -1120,14 +1149,14 @@ fn the_wheel_moves_the_selection_inside_the_hovered_list() {
         wheel(MouseEventKind::ScrollDown, 10, 3),
         &view,
     );
-    assert_eq!(app.selected, 3);
+    assert_eq!(app.view.selected, 3);
     mouse(
         &mut app,
         &mut input,
         wheel(MouseEventKind::ScrollUp, 10, 3),
         &view,
     );
-    assert_eq!(app.selected, 0);
+    assert_eq!(app.view.selected, 0);
 
     // 列表之外的滚动不应该动选中项。
     mouse(
@@ -1136,19 +1165,25 @@ fn the_wheel_moves_the_selection_inside_the_hovered_list() {
         wheel(MouseEventKind::ScrollDown, 10, 23),
         &view,
     );
-    assert_eq!(app.selected, 0);
+    assert_eq!(app.view.selected, 0);
 }
 
 #[test]
 fn overlay_clicks_go_to_the_overlay_list_not_the_library() {
     let (_temp, mut app) = test_app(AppConfig::default());
-    app.tracks = (0..5)
-        .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
-        .collect();
-    app.search.replace_tracks(&app.tracks);
+    app.catalog.set_tracks(
+        (0..5)
+            .map(|index| track(PathBuf::from(format!("/music/{index}.wav"))))
+            .collect(),
+    );
     settle_search_and_selection(&mut app);
-    app.queue = app.tracks.iter().map(|track| track.path.clone()).collect();
-    app.overlay = Overlay::Queue;
+    app.playback.queue = app
+        .catalog
+        .tracks()
+        .iter()
+        .map(|track| track.path.clone())
+        .collect();
+    app.view.overlay = Overlay::Queue;
 
     let (view, backend) = render(&app, 90, 24);
 
@@ -1170,9 +1205,9 @@ fn overlay_clicks_go_to_the_overlay_list_not_the_library() {
 
     mouse(&mut app, &mut input, click(queue_area_column, row), &view);
 
-    assert_eq!(app.queue_selected, 2);
+    assert_eq!(app.view.queue_selected, 2);
     // 曲库的选中项不能被弹层上的点击带偏。
-    assert_eq!(app.selected, 0);
+    assert_eq!(app.view.selected, 0);
 }
 
 fn write_long_test_wav(path: &Path) {
@@ -1208,10 +1243,9 @@ fn play_long_track_at(temp: &Path, app: &mut App, at: Duration) -> PathBuf {
     write_long_test_wav(&long);
     let mut item = track(long.clone());
     item.duration = Some(Duration::from_secs(100));
-    app.tracks = vec![item];
-    app.search.replace_tracks(&app.tracks);
+    app.catalog.set_tracks(vec![item]);
     app.play_index(0, false, BagUpdate::Reanchor).unwrap();
-    assert!(app.player.seek_to(at));
+    assert!(app.playback.player.seek_to(at));
     long
 }
 
@@ -1233,21 +1267,27 @@ fn restart_resumes_the_last_track_paused_at_its_position() {
     app.apply_scan_finished(vec![track(other), long_track(&long)], Vec::new());
     settle_search_and_selection(&mut app);
 
-    assert_eq!(app.player.state(), PlayState::Paused);
+    assert_eq!(app.playback.player.state(), PlayState::Paused);
     assert_eq!(app.current_track().map(|t| t.path.clone()), Some(long));
-    assert_eq!(app.selected_track_index(), app.playing_index);
-    let position = app.player.position();
+    assert_eq!(app.selected_track_index(), app.playback.playing_index);
+    let position = app.playback.player.position();
     assert!(
         position >= Duration::from_secs(39) && position <= Duration::from_secs(41),
         "恢复后位置是 {position:?}"
     );
-    assert!(app.message.as_deref().unwrap().contains("已恢复上次播放"));
+    assert!(
+        app.view
+            .message
+            .as_deref()
+            .unwrap()
+            .contains("已恢复上次播放")
+    );
 
     press(
         &mut app,
         KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
     );
-    assert_eq!(app.player.state(), PlayState::Playing);
+    assert_eq!(app.playback.player.state(), PlayState::Playing);
 }
 
 #[test]
@@ -1259,8 +1299,8 @@ fn a_finished_track_resumes_from_the_start() {
 
     let mut app = app_in(temp.path(), "music", AppConfig::default());
     app.apply_scan_finished(vec![long_track(&long)], Vec::new());
-    assert_eq!(app.player.state(), PlayState::Paused);
-    assert!(app.player.position() < Duration::from_secs(1));
+    assert_eq!(app.playback.player.state(), PlayState::Paused);
+    assert!(app.playback.player.position() < Duration::from_secs(1));
 }
 
 #[test]
@@ -1273,8 +1313,8 @@ fn a_session_from_another_library_is_not_restored() {
     std::fs::create_dir(temp.path().join("elsewhere")).unwrap();
     let mut app = app_in(temp.path(), "elsewhere", AppConfig::default());
     app.apply_scan_finished(vec![long_track(&long)], Vec::new());
-    assert_eq!(app.player.state(), PlayState::Stopped);
-    assert_eq!(app.playing_index, None);
+    assert_eq!(app.playback.player.state(), PlayState::Stopped);
+    assert_eq!(app.playback.playing_index, None);
 }
 
 #[test]
@@ -1291,7 +1331,7 @@ fn quitting_before_the_first_scan_keeps_the_saved_session() {
 
     let mut app = app_in(temp.path(), "music", AppConfig::default());
     app.apply_scan_finished(vec![long_track(&long)], Vec::new());
-    assert_eq!(app.player.state(), PlayState::Paused);
+    assert_eq!(app.playback.player.state(), PlayState::Paused);
 }
 
 #[test]
@@ -1309,7 +1349,7 @@ fn quitting_with_nothing_loaded_clears_the_session() {
 
     let mut app = app_in(temp.path(), "music", AppConfig::default());
     app.apply_scan_finished(vec![long_track(&long)], Vec::new());
-    assert_eq!(app.player.state(), PlayState::Stopped);
+    assert_eq!(app.playback.player.state(), PlayState::Stopped);
 }
 
 /// 每行文字去掉空格：宽字符后面的占位格也是空格，按原样拼接无法直接比对中文。
@@ -1402,7 +1442,7 @@ fn the_lyrics_key_hides_lyrics_and_the_choice_is_saved() {
         KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
     );
     assert!(app.lyrics().is_some());
-    assert_eq!(app.message.as_deref(), Some("已开启歌词"));
+    assert_eq!(app.view.message.as_deref(), Some("已开启歌词"));
 }
 
 #[test]
@@ -1464,7 +1504,7 @@ fn the_lyrics_pane_stays_beside_the_library_without_lyrics() {
         "[00:01.00]新歌词\n",
     )
     .unwrap();
-    app.apply_scan_finished(app.tracks.clone(), Vec::new());
+    app.apply_scan_finished(app.catalog.tracks().to_vec(), Vec::new());
     app.sync_lyrics();
     assert!(app.lyrics().is_some());
 }

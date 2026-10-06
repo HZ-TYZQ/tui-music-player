@@ -1,5 +1,7 @@
 //! 曲库列表与播放指示器：每首歌两行，标题和时长在上，歌手、专辑和格式在下。
 
+use std::time::Duration;
+
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, List, ListItem, Paragraph};
 
@@ -29,8 +31,8 @@ pub(super) fn draw_library(
     theme: &Theme,
     view: &mut ListView,
 ) {
-    let scan = if app.scanning {
-        format!(" · 扫描中 {}/{} ", app.scan_progress.0, app.scan_progress.1)
+    let scan = if let Some((scanned, found)) = app.scan_progress() {
+        format!(" · 扫描中 {scanned}/{found} ")
     } else {
         format!(" · {} 首 ", app.visible_indices().len())
     };
@@ -38,11 +40,11 @@ pub(super) fn draw_library(
         Span::styled(" ♪ Music Player ", Style::new().fg(theme.primary).bold()),
         // 排序紧跟标题：音乐库路径可能很长，放它后面会先被标题栏截掉。
         Span::styled(
-            format!("· {} ", app.config.sort.label()),
+            format!("· {} ", app.config().sort.label()),
             Style::new().fg(theme.muted),
         ),
         Span::styled(
-            format!("· {}", app.library_dir.display()),
+            format!("· {}", app.library_dir().display()),
             Style::new().fg(theme.muted),
         ),
         Span::styled(scan, Style::new().fg(theme.muted)),
@@ -52,9 +54,9 @@ pub(super) fn draw_library(
         .border_style(Style::new().fg(theme.border))
         .title(title);
 
-    if app.tracks.is_empty() {
+    if app.catalog().tracks().is_empty() {
         view.clear();
-        let text = if app.scanning {
+        let text = if app.scan_progress().is_some() {
             "  正在后台扫描音乐库……\n  界面仍可响应，扫描完成后歌曲会自动出现"
         } else {
             "  音乐库中没有支持的音频文件\n  按 r 重新扫描，或用 --set-library PATH 更换主库"
@@ -69,13 +71,13 @@ pub(super) fn draw_library(
     }
 
     let usable = usize::from(area.width).saturating_sub(2 + HIGHLIGHT_SYMBOL_WIDTH);
-    let duration_width = usize::from(app.duration_column_width);
+    let duration_width = duration_column_width(app.catalog().longest_duration());
     let muted = Style::new().fg(theme.muted);
     let items = app.visible_indices().iter().filter_map(|index| {
-        let track = app.tracks.get(*index)?;
-        let current = app.playing_index == Some(*index);
+        let track = app.catalog().tracks().get(*index)?;
+        let current = app.playback().playing_index == Some(*index);
         let (icon, icon_style) = if current {
-            playback_action_indicator(app.player.state(), theme)
+            playback_action_indicator(app.player().state(), theme)
         } else {
             (INACTIVE_ICON, Style::new().fg(theme.primary))
         };
@@ -101,9 +103,16 @@ pub(super) fn draw_library(
         .block(block)
         .highlight_style(Style::new().bg(theme.selection_bg).bold())
         .highlight_symbol(Span::styled("▸ ", Style::new().fg(theme.primary)));
-    let selected = (!app.visible_indices().is_empty()).then_some(app.selected);
+    let selected = (!app.visible_indices().is_empty()).then_some(app.view().selected);
     frame.render_stateful_widget(list, area, view.state_for(selected));
     view.record_items(inner, app.visible_indices().len(), LIBRARY_ITEM_HEIGHT);
+}
+
+/// 时长列宽：容得下最长的那首，至少按 `m:ss` 留 5 列。
+pub(super) fn duration_column_width(longest: Option<Duration>) -> usize {
+    longest
+        .map_or(0, |duration| fmt_duration(duration).len())
+        .max(5)
 }
 
 pub(super) fn playback_action_indicator(state: PlayState, theme: &Theme) -> (&'static str, Style) {

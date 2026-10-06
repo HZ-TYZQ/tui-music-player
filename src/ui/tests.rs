@@ -15,7 +15,7 @@ use super::keymap::{
 };
 use super::library::{
     INACTIVE_ICON, LIST_ICON_WIDTH, PAUSE_ACTION_ICON, PLAY_ACTION_ICON, STOPPED_ICON,
-    playback_action_indicator, track_row_text,
+    duration_column_width, playback_action_indicator, track_row_text,
 };
 use super::overlays::resolve_queue_rows;
 use super::text::{ascii_progress_bar, fmt_duration, now_playing_text, truncate_display};
@@ -321,4 +321,11 @@ fn help_lines_align_their_descriptions() {
         let prefix = line.strip_suffix(binding.text).unwrap();
         assert_eq!(UnicodeWidthStr::width(prefix), 15, "{line:?}");
     }
+}
+
+#[test]
+fn the_duration_column_fits_the_longest_track() {
+    assert_eq!(duration_column_width(None), 5);
+    assert_eq!(duration_column_width(Some(Duration::from_secs(1))), 5);
+    assert_eq!(duration_column_width(Some(Duration::from_secs(3_661))), 7);
 }

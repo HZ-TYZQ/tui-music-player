@@ -1,18 +1,8 @@
 //! 终端显示宽度与时间文本工具。
 
-use std::time::Duration;
-
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-pub fn fmt_duration(duration: Duration) -> String {
-    let seconds = duration.as_secs();
-    let (hours, minutes, seconds) = (seconds / 3600, (seconds % 3600) / 60, seconds % 60);
-    if hours > 0 {
-        format!("{hours}:{minutes:02}:{seconds:02}")
-    } else {
-        format!("{minutes}:{seconds:02}")
-    }
-}
+pub(super) use crate::track::fmt_duration;
 
 /// 生成 width 列的 ASCII 进度条：'=' 已播放、'>' 播放头、'-' 未播放。
 pub(super) fn ascii_progress_bar(ratio: f64, width: usize) -> String {

@@ -1,6 +1,7 @@
 //! 应用状态和所有可观察的播放行为。
 
 mod action;
+mod catalog;
 mod lyrics;
 mod media;
 mod order;
@@ -10,31 +11,29 @@ mod queue;
 mod selection;
 mod session;
 mod sorting;
+mod state;
 
 #[cfg(test)]
 mod tests;
 
-use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::config::{AppConfig, AppPaths};
 use crate::library::{LibraryEvent, LibraryWorker};
-use crate::lyrics::Lyrics;
-use crate::media::MediaEvent;
 use crate::player::{PlayState, PlaybackBackend, Player, PlayerEvent};
 use crate::playlist::PlaylistStore;
-use crate::search::SearchIndex;
 use crate::session::Session;
-use crate::spectrum::SpectrumProcessor;
 use crate::track::Track;
 
 pub use action::Action;
-use order::PlaybackOrder;
+pub use catalog::Catalog;
 use playback::Skip;
+pub use state::{Playback, ViewState};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Overlay {
+    #[default]
     None,
     Help,
     Playlists,
@@ -50,41 +49,25 @@ pub(super) enum BagUpdate {
     Leave,
 }
 
+/// 应用核心：曲库、播放、界面状态，以及配置、播放列表和后台扫描。
+///
+/// 字段都是私有的。界面通过下面的只读访问器读取，一切修改经由
+/// [`App::dispatch`] 和 [`App::on_tick`]。
 pub struct App {
-    pub library_dir: PathBuf,
-    pub tracks: Vec<Track>,
-    /// 时长列显示宽度缓存：仅在新建与 apply_scan_finished 时重算，绘制路径零扫描。
-    pub duration_column_width: u16,
-    pub selected: usize,
-    pub playing_index: Option<usize>,
-    pub queue: VecDeque<PathBuf>,
-    pub history: Vec<PathBuf>,
-    pub player: Box<dyn PlaybackBackend>,
-    pub should_quit: bool,
-    pub message: Option<String>,
-    pub scanning: bool,
-    pub scan_progress: (usize, usize),
-    pub search_active: bool,
-    pub search: SearchIndex,
-    pub overlay: Overlay,
-    pub playlist_selected: usize,
-    pub playlist_track_selected: usize,
-    pub queue_selected: usize,
-    pub name_input: String,
-    pub playlists: PlaylistStore,
-    pub config: AppConfig,
-    spectrum: SpectrumProcessor,
+    catalog: Catalog,
+    playback: Playback,
+    view: ViewState,
+    playlists: PlaylistStore,
+    config: AppConfig,
+    library_dir: PathBuf,
+    scanner: LibraryWorker,
+    /// 正在后台扫描时为 Some((已扫描, 已找到))。
+    scan_progress: Option<(usize, usize)>,
     paths: AppPaths,
-    library: LibraryWorker,
+    should_quit: bool,
     save_config_on_exit: bool,
-    pending_selected_path: Option<PathBuf>,
-    order: PlaybackOrder,
-    media_events: Vec<MediaEvent>,
     /// 上次退出时的曲目与位置，等第一次扫描完成、曲库就绪后再恢复。
     pending_session: Option<Session>,
-    /// 歌词所属的曲目路径与结果（None 表示这首没有歌词）。
-    /// 路径与播放器当前曲目不一致时在下一个 tick 重新加载。
-    lyrics: Option<(PathBuf, Option<Lyrics>)>,
 }
 
 impl App {
@@ -137,101 +120,129 @@ impl App {
         let playlists = PlaylistStore::load(paths.playlists_dir.clone())
             .map_err(|error| format!("无法打开播放列表目录: {error}"))?;
         let playlist_warning = playlists.warnings().first().cloned();
-        let library = LibraryWorker::start(library_dir.clone(), paths.cache_db.clone());
+        let scanner = LibraryWorker::start(library_dir.clone(), paths.cache_db.clone());
         let pending_session =
             Session::load(&paths.session_file).filter(|session| session.library_dir == library_dir);
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
         Ok(Self {
-            library_dir,
-            tracks: Vec::new(),
-            duration_column_width: 5,
-            selected: 0,
-            playing_index: None,
-            queue: VecDeque::new(),
-            history: Vec::new(),
-            player,
-            should_quit: false,
-            message: initial_warning.or(playlist_warning),
-            scanning: false,
-            scan_progress: (0, 0),
-            search_active: false,
-            search: SearchIndex::new(),
-            overlay: Overlay::None,
-            playlist_selected: 0,
-            playlist_track_selected: 0,
-            queue_selected: 0,
-            name_input: String::new(),
+            catalog: Catalog::new(),
+            playback: Playback::new(player, seed),
+            view: ViewState {
+                message: initial_warning.or(playlist_warning),
+                ..ViewState::default()
+            },
             playlists,
             config,
-            spectrum: SpectrumProcessor::new(),
+            library_dir,
+            scanner,
+            scan_progress: None,
             paths,
-            library,
+            should_quit: false,
             save_config_on_exit,
-            pending_selected_path: None,
-            order: PlaybackOrder::new(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos() as u64,
-            ),
-            media_events: Vec::new(),
             pending_session,
-            lyrics: None,
         })
     }
 
+    pub fn catalog(&self) -> &Catalog {
+        &self.catalog
+    }
+
+    pub fn playback(&self) -> &Playback {
+        &self.playback
+    }
+
+    pub fn player(&self) -> &dyn PlaybackBackend {
+        self.playback.player.as_ref()
+    }
+
+    pub fn view(&self) -> &ViewState {
+        &self.view
+    }
+
+    pub fn config(&self) -> &AppConfig {
+        &self.config
+    }
+
+    pub fn playlists(&self) -> &PlaylistStore {
+        &self.playlists
+    }
+
+    pub fn library_dir(&self) -> &Path {
+        &self.library_dir
+    }
+
+    /// 正在后台扫描时返回 (已扫描, 已找到)。
+    pub fn scan_progress(&self) -> Option<(usize, usize)> {
+        self.scan_progress
+    }
+
+    pub fn should_quit(&self) -> bool {
+        self.should_quit
+    }
+
+    /// 没有别的提示占着底栏时才显示这条，不覆盖更要紧的消息。
+    pub fn notify_if_idle(&mut self, message: String) {
+        if self.view.message.is_none() {
+            self.view.message = Some(message);
+        }
+    }
+
     pub fn visible_indices(&self) -> &[usize] {
-        self.search.results()
+        self.catalog.visible()
     }
 
     pub fn selected_track_index(&self) -> Option<usize> {
-        self.visible_indices().get(self.selected).copied()
+        self.visible_indices().get(self.view.selected).copied()
     }
 
     pub fn selected_track(&self) -> Option<&Track> {
         self.selected_track_index()
-            .and_then(|index| self.tracks.get(index))
+            .and_then(|index| self.catalog.get(index))
     }
 
     pub fn current_track(&self) -> Option<&Track> {
-        self.playing_index.and_then(|index| self.tracks.get(index))
+        self.playback
+            .playing_index
+            .and_then(|index| self.catalog.get(index))
     }
 
     pub fn on_tick(&mut self) {
-        for event in self.library.drain_events() {
+        for event in self.scanner.drain_events() {
             match event {
-                LibraryEvent::ScanStarted => {
-                    self.scanning = true;
-                    self.scan_progress = (0, 0);
-                }
+                LibraryEvent::ScanStarted => self.scan_progress = Some((0, 0)),
                 LibraryEvent::Progress { scanned, found } => {
-                    self.scan_progress = (scanned, found);
+                    self.scan_progress = Some((scanned, found));
                 }
                 LibraryEvent::ScanFinished { tracks, warnings } => {
                     self.apply_scan_finished(tracks, warnings);
                 }
-                LibraryEvent::Warning(warning) => self.message = Some(warning),
+                LibraryEvent::Warning(warning) => self.view.message = Some(warning),
                 LibraryEvent::Error(error) => {
-                    self.scanning = false;
-                    self.message = Some(error);
+                    self.scan_progress = None;
+                    self.view.message = Some(error);
                 }
             }
         }
 
         self.sync_lyrics();
-        self.search.tick();
+        self.catalog.tick_search();
         self.restore_pending_selection();
         self.clamp_selections();
 
-        for event in self.player.drain_events() {
+        for event in self.playback.player.drain_events() {
             match event {
                 PlayerEvent::EndOfStream => self.play_next(true),
                 PlayerEvent::OutputError(error) => {
-                    self.spectrum.reset_output();
-                    self.message = Some(format!("音频输出中断，已保留进度；按空格重试：{error}"));
+                    self.playback.spectrum.reset_output();
+                    self.view.message =
+                        Some(format!("音频输出中断，已保留进度；按空格重试：{error}"));
                 }
-                PlayerEvent::OutputWarning(message) => self.message = Some(message),
+                PlayerEvent::OutputWarning(message) => self.view.message = Some(message),
                 PlayerEvent::OutputRecovered => {
-                    self.message = Some("音频输出已恢复".to_owned());
+                    self.view.message = Some("音频输出已恢复".to_owned());
                 }
                 PlayerEvent::Error(error) => {
                     let name = self
@@ -250,50 +261,41 @@ impl App {
                     // 逐帧处理：一次 drain 中的多帧都经过完整管线，
                     // 避免 last-wins 丢失瞬态峰值。
                     if self.config.visualizer_enabled {
-                        self.spectrum.process_frame(&magnitudes, sample_rate);
+                        self.playback
+                            .spectrum
+                            .process_frame(&magnitudes, sample_rate);
                     }
                 }
             }
         }
 
-        if self.config.visualizer_enabled && self.player.state() != PlayState::Playing {
-            self.spectrum.fade_step();
+        if self.config.visualizer_enabled && self.playback.player.state() != PlayState::Playing {
+            self.playback.spectrum.fade_step();
         }
     }
 
     /// 当前可视 bar 高度（0.0..=1.0），供 UI 绘制。
     pub fn spectrum_bars(&self) -> &[f32] {
-        self.spectrum.bars()
+        self.playback.spectrum.bars()
     }
 
     /// 换掉整个曲目集合并重建所有派生下标。重新扫描和重排都走这里：
     /// 两者都会让 `playing_index`、搜索结果和随机袋里的下标全部失效。
     pub(super) fn replace_tracks(&mut self, tracks: Vec<Track>) {
-        let current_path = self.player.current_path().map(Path::to_path_buf);
+        let current_path = self.playback.player.current_path().map(Path::to_path_buf);
         let selected_path = self.selected_track().map(|track| track.path.clone());
-        let sort = self.config.sort;
-        self.tracks = tracks;
-        self.tracks.sort_by(|left, right| sort.compare(left, right));
-        self.duration_column_width = self
-            .tracks
-            .iter()
-            .filter_map(|track| track.duration)
-            .map(|duration| crate::ui::fmt_duration(duration).len() as u16)
-            .max()
-            .unwrap_or(5)
-            .max(5);
-        self.search.replace_tracks(&self.tracks);
-        self.playing_index = current_path
+        self.catalog.replace(tracks, self.config.sort);
+        self.playback.playing_index = current_path
             .as_ref()
             .and_then(|path| self.index_for_path(path));
         if self.config.shuffle {
-            if let Some(current) = self.playing_index {
+            if let Some(current) = self.playback.playing_index {
                 self.reanchor_shuffle_bag(current);
             } else {
-                self.order.clear();
+                self.playback.order.clear();
             }
         }
-        self.pending_selected_path = selected_path;
+        self.view.pending_selected_path = selected_path;
         self.restore_pending_selection();
     }
 
@@ -301,15 +303,14 @@ impl App {
     fn apply_scan_finished(&mut self, tracks: Vec<Track>, warnings: Vec<String>) {
         self.replace_tracks(tracks);
         // 重扫往往是因为刚放进了 .lrc 文件，下一个 tick 重新读取歌词。
-        self.lyrics = None;
-        self.scanning = false;
-        self.scan_progress = (self.tracks.len(), self.tracks.len());
-        self.message = if warnings.is_empty() {
-            Some(format!("扫描完成，共 {} 首歌曲", self.tracks.len()))
+        self.playback.lyrics = None;
+        self.scan_progress = None;
+        let count = self.catalog.len();
+        self.view.message = if warnings.is_empty() {
+            Some(format!("扫描完成，共 {count} 首歌曲"))
         } else {
             Some(format!(
-                "扫描完成，共 {} 首歌曲；{} 个文件或目录无法读取",
-                self.tracks.len(),
+                "扫描完成，共 {count} 首歌曲；{} 个文件或目录无法读取",
                 warnings.len()
             ))
         };
@@ -320,14 +321,14 @@ impl App {
         if !self.save_config_on_exit {
             return Ok(());
         }
-        self.config.volume = self.player.volume();
-        self.config.muted = self.player.is_muted();
+        self.config.volume = self.playback.player.volume();
+        self.config.muted = self.playback.player.is_muted();
         self.config
             .save(&self.paths.config_file)
             .map_err(|error| format!("无法保存配置: {error}"))
     }
 
     pub(super) fn index_for_path(&self, path: &Path) -> Option<usize> {
-        self.tracks.iter().position(|track| track.path == path)
+        self.catalog.index_of(path)
     }
 }

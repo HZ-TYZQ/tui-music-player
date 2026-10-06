@@ -18,12 +18,12 @@ use super::text::{fmt_duration, now_playing_text, truncate_display};
 pub(super) fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme, view: &mut ListView) {
     // 非列表型弹层没有可点击的行；先失效，命中测试才不会用上一帧的坐标。
     if !matches!(
-        app.overlay,
+        app.view().overlay,
         Overlay::Playlists | Overlay::PlaylistTracks | Overlay::Queue
     ) {
         view.clear();
     }
-    match app.overlay {
+    match app.view().overlay {
         Overlay::None => {}
         Overlay::Help => {
             let lines = keymap::help_lines();
@@ -44,7 +44,7 @@ pub(super) fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme, view: &m
             " 新建播放列表 ",
             vec![
                 "请输入名称：",
-                &format!("> {}█", app.name_input),
+                &format!("> {}█", app.view().name_input),
                 "",
                 &keymap::hints(NAME_INPUT),
             ],
@@ -54,9 +54,9 @@ pub(super) fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme, view: &m
         ),
         Overlay::DeleteConfirm => {
             let name = app
-                .playlists
+                .playlists()
                 .all()
-                .get(app.playlist_selected)
+                .get(app.view().playlist_selected)
                 .map(|playlist| playlist.name.as_str())
                 .unwrap_or("");
             draw_text_popup(
@@ -86,13 +86,13 @@ fn draw_playlists(frame: &mut Frame, app: &App, theme: &Theme, view: &mut ListVi
             Style::new().fg(theme.primary).bold(),
         ))
         .border_style(Style::new().fg(theme.border));
-    let items = if app.playlists.all().is_empty() {
+    let items = if app.playlists().all().is_empty() {
         vec![ListItem::new(Span::styled(
             "暂无播放列表，按 c 创建",
             Style::new().fg(theme.muted),
         ))]
     } else {
-        app.playlists
+        app.playlists()
             .all()
             .iter()
             .map(|playlist| {
@@ -106,9 +106,9 @@ fn draw_playlists(frame: &mut Frame, app: &App, theme: &Theme, view: &mut ListVi
     let list = List::new(items)
         .highlight_symbol(Span::styled("▸ ", Style::new().fg(theme.primary)))
         .highlight_style(Style::new().bg(theme.selection_bg).bold());
-    let selected = (!app.playlists.all().is_empty()).then_some(app.playlist_selected);
+    let selected = (!app.playlists().all().is_empty()).then_some(app.view().playlist_selected);
     frame.render_stateful_widget(list, viewport, view.state_for(selected));
-    view.record(viewport, app.playlists.all().len());
+    view.record(viewport, app.playlists().all().len());
     let help = help_row(inner);
     frame.render_widget(
         Paragraph::new(keymap::hints(PLAYLISTS)).style(Style::new().fg(theme.muted)),
@@ -119,7 +119,7 @@ fn draw_playlists(frame: &mut Frame, app: &App, theme: &Theme, view: &mut ListVi
 fn draw_playlist_tracks(frame: &mut Frame, app: &App, theme: &Theme, view: &mut ListView) {
     let area = centered(frame.area(), 78, 76);
     frame.render_widget(Clear, area);
-    let Some(playlist) = app.playlists.all().get(app.playlist_selected) else {
+    let Some(playlist) = app.playlists().all().get(app.view().playlist_selected) else {
         view.clear();
         return;
     };
@@ -151,7 +151,7 @@ fn draw_playlist_tracks(frame: &mut Frame, app: &App, theme: &Theme, view: &mut 
     let list = List::new(items)
         .highlight_symbol(Span::styled("▸ ", Style::new().fg(theme.primary)))
         .highlight_style(Style::new().bg(theme.selection_bg).bold());
-    let selected = (!playlist.tracks.is_empty()).then_some(app.playlist_track_selected);
+    let selected = (!playlist.tracks.is_empty()).then_some(app.view().playlist_track_selected);
     frame.render_stateful_widget(list, viewport, view.state_for(selected));
     view.record(viewport, playlist.tracks.len());
     let help = help_row(inner);
@@ -188,12 +188,12 @@ fn draw_queue(frame: &mut Frame, app: &App, theme: &Theme, view: &mut ListView) 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .title(Span::styled(
-            format!(" 播放队列 · {} 首 ", app.queue.len()),
+            format!(" 播放队列 · {} 首 ", app.playback().queue.len()),
             Style::new().fg(theme.primary).bold(),
         ))
         .border_style(Style::new().fg(theme.border));
 
-    if app.queue.is_empty() {
+    if app.playback().queue.is_empty() {
         view.clear();
         frame.render_widget(
             Paragraph::new("  队列是空的\n  在曲库中按 a 加到队尾，按 A 设为下一首")
@@ -204,11 +204,11 @@ fn draw_queue(frame: &mut Frame, app: &App, theme: &Theme, view: &mut ListView) 
         return;
     }
 
-    let rows = resolve_queue_rows(&app.tracks, &app.queue);
-    let order_width = format!("{}. ", app.queue.len()).len();
+    let rows = resolve_queue_rows(app.catalog().tracks(), &app.playback().queue);
+    let order_width = format!("{}. ", app.playback().queue.len()).len();
     let duration_width = rows
         .iter()
-        .filter_map(|row| app.tracks.get((*row)?)?.duration)
+        .filter_map(|row| app.catalog().tracks().get((*row)?)?.duration)
         .map(|duration| fmt_duration(duration).len())
         .max()
         .unwrap_or(5)
@@ -219,13 +219,14 @@ fn draw_queue(frame: &mut Frame, app: &App, theme: &Theme, view: &mut ListView) 
         .max(1);
 
     let items = app
+        .playback()
         .queue
         .iter()
         .zip(&rows)
         .enumerate()
         .map(|(order, (path, row))| {
             let order = format!("{:>width$}. ", order + 1, width = order_width - 2);
-            let Some(track) = row.and_then(|index| app.tracks.get(index)) else {
+            let Some(track) = row.and_then(|index| app.catalog().tracks().get(index)) else {
                 let name = path
                     .file_name()
                     .and_then(|name| name.to_str())
@@ -271,8 +272,12 @@ fn draw_queue(frame: &mut Frame, app: &App, theme: &Theme, view: &mut ListView) 
     let list = List::new(items)
         .highlight_symbol(Span::styled("▸ ", Style::new().fg(theme.primary)))
         .highlight_style(Style::new().bg(theme.selection_bg).bold());
-    frame.render_stateful_widget(list, viewport, view.state_for(Some(app.queue_selected)));
-    view.record(viewport, app.queue.len());
+    frame.render_stateful_widget(
+        list,
+        viewport,
+        view.state_for(Some(app.view().queue_selected)),
+    );
+    view.record(viewport, app.playback().queue.len());
     let help = help_row(inner);
     frame.render_widget(
         Paragraph::new(keymap::hints(QUEUE)).style(Style::new().fg(theme.muted)),

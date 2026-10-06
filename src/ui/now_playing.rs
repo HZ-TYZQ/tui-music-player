@@ -14,7 +14,7 @@ use super::text::{ascii_progress_bar, fmt_duration, now_playing_text};
 
 /// 解码器报告的总时长优先，其次是扫描时读到的时长。
 fn current_duration(app: &App) -> Option<Duration> {
-    app.player
+    app.player()
         .duration()
         .or_else(|| app.current_track()?.duration)
 }
@@ -23,7 +23,7 @@ fn current_duration(app: &App) -> Option<Duration> {
 pub(super) fn progress_ratio(app: &App) -> f64 {
     current_duration(app)
         .filter(|duration| !duration.is_zero())
-        .map(|duration| app.player.position().as_secs_f64() / duration.as_secs_f64())
+        .map(|duration| app.player().position().as_secs_f64() / duration.as_secs_f64())
         .unwrap_or_default()
         .clamp(0.0, 1.0)
 }
@@ -56,7 +56,7 @@ pub(super) fn draw_now_playing(
     let top = Layout::horizontal([Constraint::Min(10), Constraint::Length(38)]).split(rows[0]);
     let now = match app.current_track() {
         Some(track) => {
-            let (icon, style) = playback_action_indicator(app.player.state(), theme);
+            let (icon, style) = playback_action_indicator(app.player().state(), theme);
             let budget = usize::from(top[0].width).saturating_sub(LIST_ICON_WIDTH);
             let (title, artist) =
                 now_playing_text(track.display_title(), track.artist.as_deref(), budget);
@@ -70,24 +70,24 @@ pub(super) fn draw_now_playing(
     };
     frame.render_widget(Paragraph::new(now), top[0]);
 
-    let volume = if app.player.is_muted() {
+    let volume = if app.player().is_muted() {
         "静音".to_owned()
     } else {
-        format!("{}%", app.player.volume())
+        format!("{}%", app.player().volume())
     };
     frame.render_widget(
         Paragraph::new(format!(
             "{} · {} · 队列 {}",
             app.playback_mode().label(),
             volume,
-            app.queue.len()
+            app.playback().queue.len()
         ))
         .alignment(Alignment::Right)
         .style(Style::new().fg(theme.muted)),
         top[1],
     );
 
-    let position = app.player.position();
+    let position = app.player().position();
     let duration = current_duration(app);
     let ratio = progress_ratio(app);
     let position_label = fmt_duration(position);

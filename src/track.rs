@@ -44,6 +44,17 @@ impl Track {
 }
 
 /// 曲库列表的排序字段。播放顺序跟随列表顺序，因此它同时决定顺序播放的走向。
+/// 曲目时长的显示形式：`m:ss`，超过一小时为 `h:mm:ss`。
+pub fn fmt_duration(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    let (hours, minutes, seconds) = (seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SortKey {

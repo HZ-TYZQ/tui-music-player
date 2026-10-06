@@ -17,39 +17,47 @@ impl App {
         let Some(session) = self.pending_session.take() else {
             return;
         };
-        if self.player.state() != PlayState::Stopped || self.playing_index.is_some() {
+        if self.playback.player.state() != PlayState::Stopped
+            || self.playback.playing_index.is_some()
+        {
             return;
         }
         let Some(index) = self.index_for_path(&session.track) else {
             return;
         };
         let mut position = session.position;
-        if let Some(duration) = self.tracks[index].duration
+        if let Some(duration) = self.catalog.tracks()[index].duration
             && position + NEAR_END >= duration
         {
             position = Duration::ZERO;
         }
         // 位置恢复失败（例如文件被改短）时退回曲首，仍然选中这首歌。
         let opened = self
+            .playback
             .player
             .open_at(&session.track, position)
             .map(|()| position)
-            .or_else(|_| self.player.open(&session.track).map(|()| Duration::ZERO));
+            .or_else(|_| {
+                self.playback
+                    .player
+                    .open(&session.track)
+                    .map(|()| Duration::ZERO)
+            });
         let Ok(position) = opened else {
             return;
         };
 
-        self.spectrum.on_track_change();
-        self.playing_index = Some(index);
-        self.pending_selected_path = Some(session.track);
+        self.playback.spectrum.on_track_change();
+        self.playback.playing_index = Some(index);
+        self.view.pending_selected_path = Some(session.track);
         self.restore_pending_selection();
         if self.config.shuffle {
             self.reanchor_shuffle_bag(index);
         }
-        self.message = Some(format!(
+        self.view.message = Some(format!(
             "已恢复上次播放：{} {}，按空格继续",
-            self.tracks[index].display_title(),
-            crate::ui::fmt_duration(position)
+            self.catalog.tracks()[index].display_title(),
+            crate::track::fmt_duration(position)
         ));
     }
 
@@ -60,14 +68,14 @@ impl App {
             return Ok(());
         }
         let path = &self.paths.session_file;
-        let current = (self.player.state() != PlayState::Stopped)
-            .then(|| self.player.current_path())
+        let current = (self.playback.player.state() != PlayState::Stopped)
+            .then(|| self.playback.player.current_path())
             .flatten();
         let result = match current {
             Some(track) => Session {
                 library_dir: self.library_dir.clone(),
                 track: track.to_path_buf(),
-                position: self.player.position(),
+                position: self.playback.player.position(),
             }
             .save(path),
             None => Session::clear(path),
