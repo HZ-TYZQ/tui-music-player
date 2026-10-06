@@ -81,7 +81,7 @@ pub struct App {
     media_events: Vec<MediaEvent>,
     /// 上次退出时的曲目与位置，等第一次扫描完成、曲库就绪后再恢复。
     pending_session: Option<Session>,
-    /// 歌词所属的曲目路径与结果（None 表示这首没有同步歌词）。
+    /// 歌词所属的曲目路径与结果（None 表示这首没有歌词）。
     /// 路径与播放器当前曲目不一致时在下一个 tick 重新加载。
     lyrics: Option<(PathBuf, Option<Lyrics>)>,
     /// 上一次鼠标按下的时刻与位置，仅用于判定双击。

@@ -1,4 +1,5 @@
-//! LRC 同步歌词：解析、按播放位置定位当前行，以及从同名 `.lrc` 或内嵌标签读取。
+//! 歌词：LRC 同步歌词与纯文本歌词的解析、按播放位置定位当前行，
+//! 以及从同名 `.lrc` 或内嵌标签读取。
 
 use std::borrow::Cow;
 use std::fs;
@@ -19,6 +20,8 @@ pub struct LyricLine {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lyrics {
     lines: Vec<LyricLine>,
+    /// 纯文本歌词没有时间标签：各行时间都是零，也没有“当前行”。
+    synced: bool,
 }
 
 impl Lyrics {
@@ -63,36 +66,104 @@ impl Lyrics {
         }
         // 稳定排序：同一时刻的多行（如原文与译文）保持文件中的先后。
         lines.sort_by_key(|line| line.time);
-        Some(Self { lines })
+        Some(Self {
+            lines,
+            synced: true,
+        })
+    }
+
+    /// 没有时间标签的歌词按行原样保留；去掉 `[ti:…]` 这类 LRC 元数据行，
+    /// 首尾空行去掉，段落之间的多个空行并成一个。一行文字都没有时返回 None。
+    pub fn parse_plain(text: &str) -> Option<Self> {
+        let mut lines: Vec<LyricLine> = Vec::new();
+        for raw in text.lines() {
+            let text = raw.trim();
+            if is_metadata_tag(text) {
+                continue;
+            }
+            let blank_after_blank =
+                text.is_empty() && lines.last().is_none_or(|line| line.text.is_empty());
+            if !blank_after_blank {
+                lines.push(LyricLine {
+                    time: Duration::ZERO,
+                    text: text.to_owned(),
+                });
+            }
+        }
+        while lines.last().is_some_and(|line| line.text.is_empty()) {
+            lines.pop();
+        }
+        (!lines.is_empty()).then_some(Self {
+            lines,
+            synced: false,
+        })
+    }
+
+    /// 能按 LRC 解析就是同步歌词，否则当作纯文本。
+    fn parse_any(text: &str) -> Option<Self> {
+        Self::parse(text).or_else(|| Self::parse_plain(text))
     }
 
     pub fn lines(&self) -> &[LyricLine] {
         &self.lines
     }
 
-    /// 已经开始的最后一行；第一行之前返回 None。
+    pub fn is_synced(&self) -> bool {
+        self.synced
+    }
+
+    /// 已经开始的最后一行；第一行之前或纯文本歌词返回 None。
     pub fn current_index(&self, position: Duration) -> Option<usize> {
+        if !self.synced {
+            return None;
+        }
         self.lines
             .partition_point(|line| line.time <= position)
             .checked_sub(1)
     }
 
-    /// 先找音频旁的同名 `.lrc`，再找内嵌标签里的 LRC 文本。
-    /// 没有歌词不是错误；`.lrc` 存在却读不了才返回 Err，让界面说明原因。
+    /// 同步歌词优先于纯文本；同一种里，音频旁的同名 `.lrc` 优先于内嵌标签。
+    /// `.lrc` 读不了、解不了码或没有同步歌词时都会再看内嵌歌词。
+    /// 没有歌词不是错误；只有 `.lrc` 读不了、内嵌也没有歌词时才返回 Err，
+    /// 让界面说明原因。
     pub fn load_for(track: &Path) -> Result<Option<Self>, String> {
-        if let Some(path) = sidecar_path(track) {
-            let bytes = fs::read(&path)
-                .map_err(|error| format!("无法读取歌词 {}: {error}", file_label(&path)))?;
-            let text = decode(&bytes).ok_or_else(|| {
-                format!(
-                    "歌词 {} 无法按 UTF-8、UTF-16 或 GBK 解码，已忽略",
-                    file_label(&path)
-                )
-            })?;
-            return Ok(Self::parse(&text));
+        let (sidecar, error) = match sidecar_path(track).map(|path| read_sidecar(&path)) {
+            None => (None, None),
+            Some(Ok(lyrics)) => (lyrics, None),
+            Some(Err(error)) => (None, Some(error)),
+        };
+        if sidecar.as_ref().is_some_and(Self::is_synced) {
+            return Ok(sidecar);
         }
-        Ok(embedded(track))
+        let embedded = embedded(track);
+        if embedded.as_ref().is_some_and(Self::is_synced) {
+            return Ok(embedded);
+        }
+        match (sidecar.or(embedded), error) {
+            (None, Some(error)) => Err(error),
+            (lyrics, _) => Ok(lyrics),
+        }
     }
+}
+
+/// 整行只是一个 `[ti:…]`、`[ar:…]`、`[offset:…]` 之类的 LRC 元数据标签。
+fn is_metadata_tag(line: &str) -> bool {
+    line.strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .and_then(|tag| tag.split_once(':'))
+        .is_some_and(|(key, _)| !key.is_empty() && key.bytes().all(|b| b.is_ascii_alphabetic()))
+}
+
+fn read_sidecar(path: &Path) -> Result<Option<Lyrics>, String> {
+    let bytes =
+        fs::read(path).map_err(|error| format!("无法读取歌词 {}: {error}", file_label(path)))?;
+    let text = decode(&bytes).ok_or_else(|| {
+        format!(
+            "歌词 {} 无法按 UTF-8、UTF-16 或 GBK 解码，已忽略",
+            file_label(path)
+        )
+    })?;
+    Ok(Lyrics::parse_any(&text))
 }
 
 /// `mm:ss`、`mm:ss.xx`、`mm:ss.xxx` 以及少见的 `mm:ss:xx`。
@@ -168,7 +239,8 @@ fn decode(bytes: &[u8]) -> Option<String> {
         .map(Cow::into_owned)
 }
 
-/// 内嵌歌词常以 LRC 文本放在 LYRICS / USLT / ©lyr 里；纯文本歌词没有时间，不予显示。
+/// 内嵌歌词放在 LYRICS / USLT / ©lyr 里，可能是 LRC 文本，也可能是纯文本；
+/// 任何一处有同步歌词就用它，否则用第一段纯文本。
 fn embedded(track: &Path) -> Option<Lyrics> {
     let tagged = Probe::open(track)
         .ok()?
@@ -176,12 +248,19 @@ fn embedded(track: &Path) -> Option<Lyrics> {
         .ok()?
         .read()
         .ok()?;
-    tagged.tags().iter().find_map(|tag| {
-        [ItemKey::Lyrics, ItemKey::UnsyncLyrics]
-            .into_iter()
-            .filter_map(|key| tag.get_string(key))
-            .find_map(Lyrics::parse)
-    })
+    let texts: Vec<&str> = tagged
+        .tags()
+        .iter()
+        .flat_map(|tag| {
+            [ItemKey::Lyrics, ItemKey::UnsyncLyrics]
+                .into_iter()
+                .filter_map(|key| tag.get_string(key))
+        })
+        .collect();
+    texts
+        .iter()
+        .find_map(|text| Lyrics::parse(text))
+        .or_else(|| texts.iter().find_map(|text| Lyrics::parse_plain(text)))
 }
 
 fn file_label(path: &Path) -> String {
@@ -192,6 +271,9 @@ fn file_label(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    use lofty::config::WriteOptions;
+    use lofty::tag::{Tag, TagExt, TagType};
+
     use super::*;
 
     fn ms(value: u64) -> Duration {
@@ -292,6 +374,104 @@ mod tests {
 
         // 0xFF 在 UTF-8 和 GB18030 里都不合法。
         fs::write(temp.path().join("歌.lrc"), b"[00:01.00]\xFF\n").unwrap();
+        assert!(Lyrics::load_for(&track).unwrap_err().contains("无法按"));
+    }
+
+    #[test]
+    fn plain_text_keeps_lines_and_paragraphs_but_drops_metadata() {
+        let lyrics = Lyrics::parse_plain("[ti:标题]\n\n 第一段 \n第二行\n\n\n第二段\n\n").unwrap();
+        assert!(!lyrics.is_synced());
+        let texts: Vec<_> = lyrics
+            .lines()
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect();
+        assert_eq!(texts, ["第一段", "第二行", "", "第二段"]);
+        assert_eq!(lyrics.current_index(ms(10_000)), None);
+
+        assert_eq!(Lyrics::parse_plain("[ti:x]\n[ar:y]\n\n"), None);
+        // 只有方括号开头、不是元数据标签的行照常保留。
+        assert_eq!(
+            Lyrics::parse_plain("[副歌]").unwrap().lines()[0].text,
+            "[副歌]"
+        );
+    }
+
+    /// 写一个极短的静音 WAV，需要时用 ID3v2 USLT 内嵌歌词。
+    fn write_wav_with_lyrics(path: &Path, lyrics: Option<&str>) {
+        let samples = 8_u32;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + samples * 2).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16_u32.to_le_bytes());
+        wav.extend_from_slice(&1_u16.to_le_bytes());
+        wav.extend_from_slice(&1_u16.to_le_bytes());
+        wav.extend_from_slice(&8_000_u32.to_le_bytes());
+        wav.extend_from_slice(&16_000_u32.to_le_bytes());
+        wav.extend_from_slice(&2_u16.to_le_bytes());
+        wav.extend_from_slice(&16_u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&(samples * 2).to_le_bytes());
+        wav.resize(wav.len() + samples as usize * 2, 0);
+        fs::write(path, wav).unwrap();
+        if let Some(text) = lyrics {
+            let mut tag = Tag::new(TagType::Id3v2);
+            // lofty 把 ID3v2 的 USLT 对应到 UnsyncLyrics；ID3v2 不支持 ItemKey::Lyrics。
+            tag.insert_text(ItemKey::UnsyncLyrics, text.to_owned());
+            tag.save_to_path(path, WriteOptions::default()).unwrap();
+        }
+    }
+
+    fn first_line(track: &Path) -> (bool, String) {
+        let lyrics = Lyrics::load_for(track).unwrap().unwrap();
+        (lyrics.is_synced(), lyrics.lines()[0].text.clone())
+    }
+
+    #[test]
+    fn embedded_synced_and_plain_lyrics_are_read() {
+        let temp = tempfile::tempdir().unwrap();
+        let track = temp.path().join("歌.wav");
+        write_wav_with_lyrics(&track, None);
+        assert_eq!(Lyrics::load_for(&track), Ok(None));
+
+        write_wav_with_lyrics(&track, Some("[00:01.00]内嵌同步"));
+        assert_eq!(first_line(&track), (true, "内嵌同步".to_owned()));
+
+        write_wav_with_lyrics(&track, Some("内嵌纯文本\n第二行"));
+        assert_eq!(first_line(&track), (false, "内嵌纯文本".to_owned()));
+    }
+
+    #[test]
+    fn synced_lyrics_win_over_plain_and_the_sidecar_wins_ties() {
+        let temp = tempfile::tempdir().unwrap();
+        let track = temp.path().join("歌.wav");
+        let sidecar = temp.path().join("歌.lrc");
+
+        // .lrc 没有时间标签：回退到内嵌的同步歌词。
+        write_wav_with_lyrics(&track, Some("[00:01.00]内嵌同步"));
+        fs::write(&sidecar, "旁边纯文本").unwrap();
+        assert_eq!(first_line(&track), (true, "内嵌同步".to_owned()));
+
+        fs::write(&sidecar, "[00:01.00]旁边同步").unwrap();
+        assert_eq!(first_line(&track), (true, "旁边同步".to_owned()));
+
+        write_wav_with_lyrics(&track, Some("内嵌纯文本"));
+        fs::write(&sidecar, "旁边纯文本").unwrap();
+        assert_eq!(first_line(&track), (false, "旁边纯文本".to_owned()));
+    }
+
+    #[test]
+    fn an_undecodable_sidecar_falls_back_to_embedded_lyrics() {
+        let temp = tempfile::tempdir().unwrap();
+        let track = temp.path().join("歌.wav");
+        fs::write(temp.path().join("歌.lrc"), b"[00:01.00]\xFF\n").unwrap();
+
+        write_wav_with_lyrics(&track, Some("内嵌纯文本"));
+        assert_eq!(first_line(&track), (false, "内嵌纯文本".to_owned()));
+
+        // 内嵌也没有歌词时才报告 .lrc 的问题。
+        write_wav_with_lyrics(&track, None);
         assert!(Lyrics::load_for(&track).unwrap_err().contains("无法按"));
     }
 }

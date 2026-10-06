@@ -1,5 +1,7 @@
 //! 当前播放状态、模式与进度条。
 
+use std::time::Duration;
+
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Paragraph};
 
@@ -9,6 +11,22 @@ use crate::theme::Theme;
 use super::library::{LIST_ICON_WIDTH, playback_action_indicator};
 use super::lyrics::inline_lyric;
 use super::text::{ascii_progress_bar, fmt_duration, now_playing_text};
+
+/// 解码器报告的总时长优先，其次是扫描时读到的时长。
+fn current_duration(app: &App) -> Option<Duration> {
+    app.player
+        .duration()
+        .or_else(|| app.current_track()?.duration)
+}
+
+/// 当前曲目的播放进度，0.0–1.0；不知道总时长时为 0。
+pub(super) fn progress_ratio(app: &App) -> f64 {
+    current_duration(app)
+        .filter(|duration| !duration.is_zero())
+        .map(|duration| app.player.position().as_secs_f64() / duration.as_secs_f64())
+        .unwrap_or_default()
+        .clamp(0.0, 1.0)
+}
 
 /// 返回进度条自身占据的矩形，供点击跳转做命中测试。
 pub(super) fn draw_now_playing(
@@ -70,15 +88,8 @@ pub(super) fn draw_now_playing(
     );
 
     let position = app.player.position();
-    let duration = app
-        .player
-        .duration()
-        .or_else(|| app.current_track()?.duration);
-    let ratio = duration
-        .filter(|duration| !duration.is_zero())
-        .map(|duration| position.as_secs_f64() / duration.as_secs_f64())
-        .unwrap_or_default()
-        .clamp(0.0, 1.0);
+    let duration = current_duration(app);
+    let ratio = progress_ratio(app);
     let position_label = fmt_duration(position);
     let duration_label = duration.map(fmt_duration).unwrap_or_else(|| "--:--".into());
     let bar_width =

@@ -1272,6 +1272,35 @@ fn the_lyrics_key_hides_lyrics_and_the_choice_is_saved() {
 }
 
 #[test]
+fn plain_lyrics_fill_the_pane_and_scroll_with_the_progress() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let text: String = (1..=40).map(|line| format!("L{line:02}\n")).collect();
+    std::fs::write(temp.path().join("music").join("long.lrc"), text).unwrap();
+    play_long_track_at(temp.path(), &mut app, Duration::from_secs(50));
+    app.sync_lyrics();
+    assert!(app.lyrics().is_some_and(|lyrics| !lyrics.is_synced()));
+
+    let (_, backend) = render(&app, 120, 30);
+    let rows = screen_rows(&backend);
+    assert!(rows[0].contains("歌词·纯文本"), "标题是 {:?}", rows[0]);
+    // 40 行放不下：播放到一半时开头和结尾都滚出去了，中间那段可见。
+    let visible = |label: &str| rows.iter().any(|row| row.contains(label));
+    assert!(!visible("L01") && !visible("L40"));
+    assert!(visible("L20"));
+    let bold = (0..backend.buffer().area.width).any(|column| {
+        (1..29).any(|row| {
+            let cell = &backend.buffer()[(column, row)];
+            cell.symbol() == "L" && cell.modifier.contains(ratatui::style::Modifier::BOLD)
+        })
+    });
+    assert!(!bold, "纯文本没有当前行，不应加粗");
+
+    // 窄终端的播放区边框只显示同步歌词的当前行。
+    let (_, backend) = render(&app, 80, 24);
+    assert!(!screen_rows(&backend).iter().any(|row| row.contains("L2")));
+}
+
+#[test]
 fn the_lyrics_pane_stays_beside_the_library_without_lyrics() {
     let (temp, mut app) = test_app(AppConfig::default());
     // 还没播放时面板就在，播放区和面板各显示一次“未在播放”。
@@ -1292,7 +1321,7 @@ fn the_lyrics_pane_stays_beside_the_library_without_lyrics() {
     let (view, backend) = render(&app, 120, 30);
     let rows = screen_rows(&backend);
     assert!(rows[0].contains("歌词"));
-    assert!(rows.iter().any(|row| row.contains("暂无同步歌词")));
+    assert!(rows.iter().any(|row| row.contains("暂无歌词")));
     assert!(!view.library.contains(110, 5));
 
     // 重扫之后才放进来的 .lrc 会被读到。

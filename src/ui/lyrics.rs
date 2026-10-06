@@ -1,4 +1,4 @@
-//! 同步歌词：宽终端在曲库右侧常驻滚动面板，窄终端只在播放区边框上显示当前行。
+//! 歌词：宽终端在曲库右侧常驻滚动面板，窄终端只在播放区边框上显示同步歌词的当前行。
 
 use std::ops::Range;
 
@@ -9,6 +9,7 @@ use crate::app::App;
 use crate::lyrics::Lyrics;
 use crate::theme::Theme;
 
+use super::now_playing::progress_ratio;
 use super::text::truncate_display;
 
 /// 曲库区域至少这么宽才分出歌词面板，保证曲库仍能显示标题、歌手和时长。
@@ -38,19 +39,25 @@ fn current_range(lyrics: &Lyrics, position: std::time::Duration) -> Option<Range
 }
 
 pub(super) fn draw_lyrics(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
+    let lyrics = app.lyrics();
+    let mut title = vec![Span::styled(
+        " 歌词 ",
+        Style::new().fg(theme.primary).bold(),
+    )];
+    if lyrics.is_some_and(|lyrics| !lyrics.is_synced()) {
+        // 说明这份歌词为什么不跟着唱的那句高亮。
+        title.push(Span::styled("· 纯文本 ", Style::new().fg(theme.muted)));
+    }
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(theme.border))
-        .title(Span::styled(
-            " 歌词 ",
-            Style::new().fg(theme.primary).bold(),
-        ));
+        .title(Line::from(title));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.is_empty() {
         return;
     }
-    let Some(lyrics) = app.lyrics() else {
+    let Some(lyrics) = lyrics else {
         draw_placeholder(frame, app, inner, theme);
         return;
     };
@@ -58,11 +65,17 @@ pub(super) fn draw_lyrics(frame: &mut Frame, app: &App, area: Rect, theme: &Them
     let lines = lyrics.lines();
     let height = usize::from(inner.height);
     let current = current_range(lyrics, app.player.position());
-    // 当前行尽量停在面板中间；开头和结尾不留多余空白。
-    let anchor = current.as_ref().map_or(0, |range| range.start);
-    let start = anchor
-        .saturating_sub(height.saturating_sub(1) / 2)
-        .min(lines.len().saturating_sub(height));
+    let overflow = lines.len().saturating_sub(height);
+    let start = if lyrics.is_synced() {
+        // 当前行尽量停在面板中间；开头和结尾不留多余空白。
+        let anchor = current.as_ref().map_or(0, |range| range.start);
+        anchor
+            .saturating_sub(height.saturating_sub(1) / 2)
+            .min(overflow)
+    } else {
+        // 纯文本没有时间：放得下就整段显示，放不下按播放进度匀速往下滚。
+        (overflow as f64 * progress_ratio(app)).round() as usize
+    };
     let width = usize::from(inner.width);
     let text: Vec<Line> = lines
         .iter()
@@ -84,7 +97,7 @@ pub(super) fn draw_lyrics(frame: &mut Frame, app: &App, area: Rect, theme: &Them
 /// 面板常驻，没有歌词可显示时留一行提示，停在有歌词时当前行所在的高度。
 fn draw_placeholder(frame: &mut Frame, app: &App, inner: Rect, theme: &Theme) {
     let hint = if app.current_track().is_some() {
-        "暂无同步歌词"
+        "暂无歌词"
     } else {
         "未在播放"
     };

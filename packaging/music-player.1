@@ -53,11 +53,14 @@ Lower or raise volume by 5 percent.
 Lower or raise volume by 1 percent.
 .TP
 .B y
-Show or hide synchronized lyrics. Lyrics come from an LRC file next to the
-audio file with the same name, or from LRC text embedded in its tags. Wide
-terminals keep a scrolling pane beside the library, even for tracks without
-lyrics; narrower ones show the current line on the now playing border. Hiding
-lyrics gives the library the full width. LRC files may be UTF-8, GBK, or UTF-16
+Show or hide lyrics. Lyrics come from an LRC file next to the audio file with
+the same name, or from lyrics embedded in its tags. Synchronized lyrics are
+preferred over plain text, and the LRC file over embedded lyrics. Wide
+terminals keep a lyrics pane beside the library, even for tracks without
+lyrics: synchronized lyrics scroll with the current line highlighted, and plain
+lyrics scroll with playback progress. Narrower terminals show the current
+synchronized line on the now playing border. Hiding lyrics gives the library
+the full width. LRC files may be UTF-8, GBK, or UTF-16
 with a byte order mark. The choice is restored on the next launch.
 .TP
 .B m

@@ -1,4 +1,4 @@
-//! 当前曲目的同步歌词：按需加载、开关。
+//! 当前曲目的歌词：按需加载、开关。
 
 use crate::lyrics::Lyrics;
 
@@ -55,7 +55,7 @@ impl App {
                 if self.lyrics().is_some() || self.player.current_path().is_none() {
                     "已开启歌词"
                 } else {
-                    "已开启歌词；当前曲目没有同步歌词"
+                    "已开启歌词；当前曲目没有歌词"
                 }
                 .to_owned(),
             );
