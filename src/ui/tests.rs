@@ -6,7 +6,7 @@ use ratatui::prelude::{Color, Rect};
 use unicode_width::UnicodeWidthStr;
 
 use crate::player::PlayState;
-use crate::theme::DEFAULT_THEME;
+use crate::theme::{DEFAULT_THEME, Theme};
 use crate::track::Track;
 
 use super::ListView;
@@ -224,6 +224,36 @@ fn spectrum_gradient_uses_theme_endpoints() {
         frequency_color(31, 32, &DEFAULT_THEME),
         Color::Rgb(242, 242, 242)
     );
+}
+
+#[test]
+fn a_spectrum_without_rgb_ends_splits_at_the_middle() {
+    let theme = Theme {
+        spectrum_low: Color::Gray,
+        spectrum_high: Color::Reset,
+        ..DEFAULT_THEME
+    };
+    let colors: Vec<_> = (0..6)
+        .map(|index| frequency_color(index, 6, &theme))
+        .collect();
+    assert_eq!(
+        colors,
+        [
+            Color::Gray,
+            Color::Gray,
+            Color::Gray,
+            Color::Reset,
+            Color::Reset,
+            Color::Reset
+        ]
+    );
+    // 一端是 RGB 也不能插值。
+    let mixed = Theme {
+        spectrum_low: Color::Rgb(0, 0, 0),
+        ..theme
+    };
+    assert_eq!(frequency_color(0, 6, &mixed), Color::Rgb(0, 0, 0));
+    assert_eq!(frequency_color(5, 6, &mixed), Color::Reset);
 }
 
 #[test]

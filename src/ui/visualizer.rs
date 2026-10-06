@@ -92,6 +92,7 @@ pub(super) fn spectrum_block(fill: f32) -> char {
     }
 }
 
+/// 两端都是 RGB 时按频率插值；否则没法混色，低频一半用低端色、高频一半用高端色。
 pub(super) fn frequency_color(index: usize, count: usize, theme: &Theme) -> Color {
     let ratio = if count <= 1 {
         0.0
@@ -101,7 +102,11 @@ pub(super) fn frequency_color(index: usize, count: usize, theme: &Theme) -> Colo
     let (Color::Rgb(low_r, low_g, low_b), Color::Rgb(high_r, high_g, high_b)) =
         (theme.spectrum_low, theme.spectrum_high)
     else {
-        return theme.spectrum_low;
+        return if ratio < 0.5 {
+            theme.spectrum_low
+        } else {
+            theme.spectrum_high
+        };
     };
     let mix =
         |low: u8, high: u8| (f32::from(low) + (f32::from(high) - f32::from(low)) * ratio) as u8;
