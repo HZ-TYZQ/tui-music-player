@@ -113,10 +113,39 @@ Open the complete in-application help.
 .TP
 .B q
 Quit.
+.SH THEME
+The
+.B [theme]
+table in config.toml picks a preset and may override single colors:
+.PP
+.RS
+.nf
+[theme]
+preset = "light"
+selection_bg = "#C8D3F0"
+.fi
+.RE
+.PP
+The presets are
+.B default
+(grey-white levels for dark terminals),
+.B light
+(dark greys for light terminals), and
+.B terminal
+(palette colors only, following the terminal's own scheme). The colors that can
+be overridden are primary, muted, border, selection_bg, danger, spectrum_low, and
+spectrum_high. A color is #RRGGBB, a name such as red or dark-gray, a palette
+index from 0 to 255, or reset for the terminal's default foreground. The player
+never paints a background of its own.
+.PP
+An unknown preset falls back to default and an unreadable color keeps the
+preset value; both are reported in the footer at start-up, and the file is kept
+as written. The theme is read at start-up. Quit the player before editing the
+file, because it writes back the settings it started with when it exits.
 .SH FILES
 .TP
 .I $XDG_CONFIG_HOME/tui-music-player/config.toml
-Main library, playback, and visualizer settings.
+Main library, playback, visualizer, and theme settings.
 .TP
 .I $XDG_DATA_HOME/tui-music-player/playlists/*.json
 Independent named playlist files.
