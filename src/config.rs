@@ -1,5 +1,6 @@
 //! 平台标准路径和用户配置。
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -64,6 +65,50 @@ pub struct AppConfig {
     pub visualizer_enabled: bool,
     pub mouse_enabled: bool,
     pub lyrics_enabled: bool,
+    pub theme: ThemeConfig,
+}
+
+/// `[theme]` 段：一个内置预设，加上可选的逐项颜色覆盖。
+///
+/// 这里只存用户写下的原文，退出保存时原样写回，写错的值不会被悄悄改掉；
+/// 解析和出错回退见 `theme` 模块的 `Theme::from_config`。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThemeConfig {
+    pub preset: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub muted: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub border: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_bg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub danger: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spectrum_low: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spectrum_high: Option<String>,
+    /// 不认识的键：启动时提示，保存时也原样保留。
+    #[serde(flatten)]
+    pub unknown: BTreeMap<String, toml::Value>,
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        Self {
+            preset: "default".to_owned(),
+            primary: None,
+            muted: None,
+            border: None,
+            selection_bg: None,
+            danger: None,
+            spectrum_low: None,
+            spectrum_high: None,
+            unknown: BTreeMap::new(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,6 +125,7 @@ struct RawConfig {
     visualizer_enabled: bool,
     mouse_enabled: bool,
     lyrics_enabled: bool,
+    theme: ThemeConfig,
 }
 
 impl Default for RawConfig {
@@ -96,6 +142,7 @@ impl Default for RawConfig {
             visualizer_enabled: true,
             mouse_enabled: true,
             lyrics_enabled: true,
+            theme: ThemeConfig::default(),
         }
     }
 }
@@ -113,6 +160,7 @@ impl Default for AppConfig {
             visualizer_enabled: true,
             mouse_enabled: true,
             lyrics_enabled: true,
+            theme: ThemeConfig::default(),
         }
     }
 }
@@ -140,6 +188,7 @@ impl AppConfig {
             visualizer_enabled: raw.visualizer_enabled,
             mouse_enabled: raw.mouse_enabled,
             lyrics_enabled: raw.lyrics_enabled,
+            theme: raw.theme,
         }
     }
 
@@ -296,6 +345,65 @@ mod tests {
     }
 
     #[test]
+    fn theme_settings_are_saved_back_exactly_as_written() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        fs::write(
+            &path,
+            r##"version = 1
+volume = 60
+
+[theme]
+preset = "Light"
+primary = "#12345"
+border = "dark-gray"
+primay = "#FFFFFF"
+"##,
+        )
+        .unwrap();
+
+        let (loaded, warning) = AppConfig::load(&path).unwrap();
+        assert!(warning.is_none());
+        assert_eq!(loaded.theme.preset, "Light");
+        assert_eq!(loaded.theme.primary.as_deref(), Some("#12345"));
+        assert_eq!(loaded.theme.border.as_deref(), Some("dark-gray"));
+        assert_eq!(loaded.theme.muted, None);
+        assert_eq!(
+            loaded
+                .theme
+                .unknown
+                .get("primay")
+                .and_then(|value| value.as_str()),
+            Some("#FFFFFF")
+        );
+
+        loaded.save(&path).unwrap();
+        let (reloaded, _) = AppConfig::load(&path).unwrap();
+        assert_eq!(reloaded.theme, loaded.theme);
+        // 没写的颜色不会补上，写错的值和不认识的键原样留着。
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(
+            saved.ends_with(
+                "[theme]\npreset = \"Light\"\nprimary = \"#12345\"\n\
+                 border = \"dark-gray\"\nprimay = \"#FFFFFF\"\n"
+            ),
+            "{saved}"
+        );
+    }
+
+    #[test]
+    fn a_new_config_names_the_default_theme_preset() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        AppConfig::default().save(&path).unwrap();
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(
+            saved.trim_end().ends_with("[theme]\npreset = \"default\""),
+            "{saved}"
+        );
+    }
+
+    #[test]
     fn old_config_defaults_visualizer_to_enabled() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("config.toml");
@@ -312,6 +420,7 @@ mod tests {
         assert!(loaded.lyrics_enabled);
         assert_eq!(loaded.repeat, RepeatMode::None);
         assert!(!loaded.shuffle);
+        assert_eq!(loaded.theme, ThemeConfig::default());
     }
 
     #[test]

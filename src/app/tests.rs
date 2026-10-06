@@ -1398,6 +1398,28 @@ fn quitting_with_nothing_loaded_clears_the_session() {
     assert_eq!(app.playback.player.state(), PlayState::Stopped);
 }
 
+#[test]
+fn the_configured_theme_colors_the_screen_and_mistakes_show_in_the_footer() {
+    use ratatui::style::Color;
+
+    let mut config = AppConfig::default();
+    config.theme.preset = "light".to_owned();
+    config.theme.border = Some("#123456".to_owned());
+    config.theme.primary = Some("#nope".to_owned());
+    let (_temp, app) = test_app(config);
+
+    // primary 写错了，沿用 light 预设的深灰。
+    assert_eq!(app.view().theme.primary, Color::Rgb(38, 38, 38));
+    let (_, backend) = render(&app, 100, 24);
+    // 左上角是曲库的边框。
+    assert_eq!(backend.buffer()[(0, 0)].fg, Color::Rgb(0x12, 0x34, 0x56));
+    let footer = screen_rows(&backend).pop().unwrap();
+    assert!(
+        footer.contains("主题配置有误:primary的值\"#nope\"无法识别"),
+        "{footer}"
+    );
+}
+
 /// 每行文字去掉空格：宽字符后面的占位格也是空格，按原样拼接无法直接比对中文。
 fn screen_rows(backend: &ratatui::backend::TestBackend) -> Vec<String> {
     let buffer = backend.buffer();

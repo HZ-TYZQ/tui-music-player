@@ -16,7 +16,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, ListState, Paragraph};
 
 use crate::app::App;
-use crate::theme::{DEFAULT_THEME, Theme};
+use crate::theme::Theme;
 
 pub use keymap::key_action;
 use library::draw_library;
@@ -91,10 +91,7 @@ impl ListView {
 }
 
 pub fn draw(frame: &mut Frame, app: &App, view: &mut ViewLayout) {
-    draw_with_theme(frame, app, view, &DEFAULT_THEME);
-}
-
-fn draw_with_theme(frame: &mut Frame, app: &App, view: &mut ViewLayout, theme: &Theme) {
+    let theme = &app.view().theme;
     let area = frame.area();
     if area.width < 42 || area.height < 12 {
         // 这一帧什么列表都没画，命中测试必须失效，否则会用上一帧的坐标误判。

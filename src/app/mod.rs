@@ -24,6 +24,7 @@ use crate::library::{LibraryEvent, LibraryWorker};
 use crate::player::{PlayState, PlaybackBackend, Player, PlayerEvent};
 use crate::playlist::PlaylistStore;
 use crate::session::Session;
+use crate::theme::Theme;
 use crate::track::Track;
 
 pub use action::Action;
@@ -108,6 +109,7 @@ impl App {
         let playlists = PlaylistStore::load(paths.playlists_dir.clone())
             .map_err(|error| format!("无法打开播放列表目录: {error}"))?;
         let playlist_warning = playlists.warnings().first().cloned();
+        let (theme, theme_warning) = Theme::from_config(&config.theme);
         let scanner = LibraryWorker::start(library_dir.clone(), paths.cache_db.clone());
         let pending_session =
             Session::load(&paths.session_file).filter(|session| session.library_dir == library_dir);
@@ -119,7 +121,8 @@ impl App {
             catalog: Catalog::new(),
             playback: Playback::new(player, seed),
             view: ViewState {
-                message: initial_warning.or(playlist_warning),
+                message: initial_warning.or(theme_warning).or(playlist_warning),
+                theme,
                 ..ViewState::default()
             },
             playlists,

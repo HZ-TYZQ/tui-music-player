@@ -10,6 +10,7 @@ use crate::lyrics::Lyrics;
 use crate::media::MediaEvent;
 use crate::player::PlaybackBackend;
 use crate::spectrum::SpectrumProcessor;
+use crate::theme::Theme;
 
 use super::Overlay;
 use super::order::PlaybackOrder;
@@ -46,7 +47,7 @@ impl Playback {
     }
 }
 
-/// 光标、弹层、输入框和底栏提示。
+/// 光标、弹层、输入框、底栏提示，以及界面用的主题。
 #[derive(Debug, Default)]
 pub struct ViewState {
     /// 曲库光标：指向当前搜索结果中的第几条。
@@ -60,6 +61,8 @@ pub struct ViewState {
     pub(crate) name_input: String,
     /// 底栏显示的一行提示。
     pub(crate) message: Option<String>,
+    /// 启动时按配置的 `[theme]` 得出。
+    pub(crate) theme: Theme,
     /// 重扫或重排后要重新选中的曲目；等搜索结果就绪再落到光标上。
     pub(super) pending_selected_path: Option<PathBuf>,
 }
