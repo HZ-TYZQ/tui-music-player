@@ -1,5 +1,5 @@
 Name:           music-player
-Version:        1.3.4
+Version:        1.4.0
 Release:        1%{?dist}
 Summary:        Terminal music library player
 
@@ -56,6 +56,13 @@ install -Dpm 0644 assets/icons/%{name}-48.png %{buildroot}%{_datadir}/icons/hico
 %{_datadir}/icons/hicolor/48x48/apps/%{name}.png
 
 %changelog
+* Tue Oct 06 2026 HZ-TYZQ - 1.4.0-1
+- Move settings to a hand-editable config.kdl; on exit only the settings
+  changed while running are written back, keeping comments and layout
+- Carry over config.toml on first start and report config mistakes by line
+- Add default, light, and terminal theme presets with per-color overrides
+- Abstract the playback backend and route input through actions
+
 * Tue Oct 06 2026 HZ-TYZQ - 1.3.4-1
 - Show plain lyrics without timestamps, scrolled with playback progress
 - Fall back to embedded lyrics when the sidecar LRC file is unusable
