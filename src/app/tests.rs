@@ -856,6 +856,37 @@ fn cycling_the_sort_key_reorders_the_library_and_keeps_the_playing_track() {
 }
 
 #[test]
+fn resorting_keeps_the_cursor_on_the_selected_track() {
+    let (temp, mut app) = test_app(AppConfig::default());
+    let paths = sort_fixture(&mut app, &temp.path().join("music"));
+    settle_search_and_selection(&mut app);
+    assert_eq!(app.view.selected, 0);
+
+    // 按标题排序后 zeta 从第一行移到最后一行，光标要跟着它走。
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
+    );
+    settle_search_and_selection(&mut app);
+    assert_eq!(app.view.selected, 2);
+    assert_eq!(
+        app.selected_track().map(|track| &track.path),
+        Some(&paths[0])
+    );
+
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('O'), KeyModifiers::NONE),
+    );
+    settle_search_and_selection(&mut app);
+    assert_eq!(app.view.selected, 0);
+    assert_eq!(
+        app.selected_track().map(|track| &track.path),
+        Some(&paths[0])
+    );
+}
+
+#[test]
 fn toggling_the_sort_direction_reverses_the_library() {
     let (temp, mut app) = test_app(AppConfig::default());
     sort_fixture(&mut app, &temp.path().join("music"));

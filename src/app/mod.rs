@@ -43,6 +43,12 @@ pub enum Overlay {
     DeleteConfirm,
 }
 
+/// 曲库变动前记下的曲目，变动后按路径找回它们的新下标。
+struct Positions {
+    playing: Option<PathBuf>,
+    selected: Option<PathBuf>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum BagUpdate {
     Reanchor,
@@ -268,13 +274,34 @@ impl App {
         self.playback.spectrum.bars()
     }
 
-    /// 换掉整个曲目集合并重建所有派生下标。重新扫描和重排都走这里：
-    /// 两者都会让 `playing_index`、搜索结果和随机袋里的下标全部失效。
+    /// 换掉整个曲目集合，并按路径找回正在播放和选中的曲目。
     pub(super) fn replace_tracks(&mut self, tracks: Vec<Track>) {
-        let current_path = self.playback.player.current_path().map(Path::to_path_buf);
-        let selected_path = self.selected_track().map(|track| track.path.clone());
+        let remembered = self.remember_positions();
         self.catalog.replace(tracks, self.config.sort);
-        self.playback.playing_index = current_path
+        self.restore_positions(remembered);
+    }
+
+    /// 按当前排序重排曲库，正在播放和选中的曲目跟着移动。
+    pub(super) fn resort_tracks(&mut self) {
+        let remembered = self.remember_positions();
+        self.catalog.resort(self.config.sort);
+        self.restore_positions(remembered);
+    }
+
+    /// 曲库变动前记下正在播放与选中的曲目路径。必须在动曲库之前取：
+    /// 之后旧下标就对不上了。
+    fn remember_positions(&self) -> Positions {
+        Positions {
+            playing: self.playback.player.current_path().map(Path::to_path_buf),
+            selected: self.selected_track().map(|track| track.path.clone()),
+        }
+    }
+
+    /// 曲库变动后按路径重建所有派生下标：`playing_index`、随机袋和光标。
+    /// 光标要等搜索结果就绪才能落定，因此先记成待恢复的路径。
+    fn restore_positions(&mut self, remembered: Positions) {
+        self.playback.playing_index = remembered
+            .playing
             .as_ref()
             .and_then(|path| self.index_for_path(path));
         if self.config.shuffle {
@@ -284,7 +311,7 @@ impl App {
                 self.playback.order.clear();
             }
         }
-        self.view.pending_selected_path = selected_path;
+        self.view.pending_selected_path = remembered.selected;
         self.restore_pending_selection();
     }
 

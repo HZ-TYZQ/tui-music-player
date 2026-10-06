@@ -63,9 +63,10 @@ impl Catalog {
         self.set_unsorted(tracks);
     }
 
-    /// 取走全部曲目以便重排；搜索结果留到随后的 `replace` 再重建。
-    pub(super) fn take_tracks(&mut self) -> Vec<Track> {
-        std::mem::take(&mut self.tracks)
+    /// 按 `sort` 重排现有曲目并重建搜索索引。
+    pub(super) fn resort(&mut self, sort: SortOrder) {
+        let tracks = std::mem::take(&mut self.tracks);
+        self.replace(tracks, sort);
     }
 
     pub(super) fn set_query(&mut self, query: String) {
