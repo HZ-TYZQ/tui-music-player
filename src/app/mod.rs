@@ -21,7 +21,7 @@ use crate::config::{AppConfig, AppPaths};
 use crate::library::{LibraryEvent, LibraryWorker};
 use crate::lyrics::Lyrics;
 use crate::media::MediaEvent;
-use crate::player::{PlayState, Player, PlayerEvent};
+use crate::player::{PlayState, PlaybackBackend, Player, PlayerEvent};
 use crate::playlist::PlaylistStore;
 use crate::search::SearchIndex;
 use crate::session::Session;
@@ -56,7 +56,7 @@ pub struct App {
     pub playing_index: Option<usize>,
     pub queue: VecDeque<PathBuf>,
     pub history: Vec<PathBuf>,
-    pub player: Player,
+    pub player: Box<dyn PlaybackBackend>,
     pub should_quit: bool,
     pub message: Option<String>,
     pub scanning: bool,
@@ -97,7 +97,7 @@ impl App {
         save_config_on_exit: bool,
     ) -> Result<Self, String> {
         Self::with_player(
-            Player::new()?,
+            Box::new(Player::new()?),
             library_dir,
             paths,
             config,
@@ -115,7 +115,7 @@ impl App {
         save_config_on_exit: bool,
     ) -> Result<Self, String> {
         Self::with_player(
-            Player::new_for_tests()?,
+            Box::new(Player::new_for_tests()?),
             library_dir,
             paths,
             config,
@@ -125,7 +125,7 @@ impl App {
     }
 
     fn with_player(
-        player: Player,
+        mut player: Box<dyn PlaybackBackend>,
         library_dir: PathBuf,
         paths: AppPaths,
         config: AppConfig,

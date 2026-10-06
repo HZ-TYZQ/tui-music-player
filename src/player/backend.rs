@@ -15,7 +15,7 @@ use rodio::mixer::mixer;
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Source};
 
 use super::spectrum::{InternalSpectrumEvent, PcmBatch, PcmTap, SpectrumWorker};
-use super::{PlayState, PlayerEvent};
+use super::{PlayState, PlaybackBackend, PlayerEvent};
 
 const EARLY_EOS_TOLERANCE: Duration = Duration::from_secs(1);
 const SEEK_END_GUARD: Duration = Duration::from_millis(50);
@@ -170,29 +170,6 @@ impl Player {
         }
     }
 
-    pub fn state(&self) -> PlayState {
-        self.state
-    }
-
-    pub fn current_path(&self) -> Option<&Path> {
-        self.current_path.as_deref()
-    }
-
-    pub fn play(&mut self, path: &Path) -> Result<(), String> {
-        self.load(path, PlayState::Playing)
-    }
-
-    /// 解码并装上曲目，保持暂停。Rodio 的 `append` 会解除 `stopped`，
-    /// 必须在 append 之前把 Player 置为 paused，否则会直接出声。
-    pub fn open(&mut self, path: &Path) -> Result<(), String> {
-        self.load(path, PlayState::Paused)
-    }
-
-    /// 同 `open`，但从指定位置开始，用于恢复上次会话。
-    pub fn open_at(&mut self, path: &Path, position: Duration) -> Result<(), String> {
-        self.load_at(path, PlayState::Paused, position)
-    }
-
     fn load(&mut self, path: &Path, target: PlayState) -> Result<(), String> {
         self.load_at(path, target, Duration::ZERO)
     }
@@ -296,30 +273,6 @@ impl Player {
         Ok(())
     }
 
-    pub fn pause(&mut self) {
-        // 恢复期间收到 Pause，取消本次恢复；后台创建的播放器始终保持暂停。
-        self.recovery = None;
-        if self.state == PlayState::Playing {
-            self.backend.pause();
-            self.state = PlayState::Paused;
-            self.is_playing.store(false, Ordering::Relaxed);
-            self.refresh_spectrum_live();
-        }
-    }
-
-    pub fn resume(&mut self) {
-        if self.output_unavailable() {
-            self.start_recovery();
-            return;
-        }
-        if self.state == PlayState::Paused {
-            self.backend.play();
-            self.state = PlayState::Playing;
-            self.is_playing.store(true, Ordering::Relaxed);
-            self.refresh_spectrum_live();
-        }
-    }
-
     pub fn toggle_pause(&mut self) {
         match self.state {
             PlayState::Playing => self.pause(),
@@ -328,67 +281,13 @@ impl Player {
         }
     }
 
-    pub fn stop(&mut self) {
-        self.recovery = None;
-        if self.output_fault.is_some() {
-            self.output_fault = Some(Duration::ZERO);
-        }
-        let _ = self.advance_generation();
-        self.backend.stop();
-        self.state = PlayState::Stopped;
-        self.current_path = None;
-        self.current_duration = None;
-        *self.position_offset.lock().unwrap() = Duration::ZERO;
-        self.set_forced_position(Duration::ZERO);
-        self.is_playing.store(false, Ordering::Relaxed);
-        self.refresh_spectrum_live();
-    }
-
-    pub fn position(&self) -> Duration {
-        if let Some(position) = self.output_fault {
-            return position;
-        }
-        let backend = self.backend.get_pos() + *self.position_offset.lock().unwrap();
-        let mut forced = self
-            .force_position
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(fallback) = *forced {
-            let delta = backend.abs_diff(fallback);
-            if delta <= POSITION_TRUST_WINDOW {
-                *forced = None;
-                return backend;
-            }
-            return fallback;
-        }
-        backend
-    }
-
-    pub fn duration(&self) -> Option<Duration> {
-        self.current_duration
-    }
-
-    pub fn seek_to(&self, pos: Duration) -> bool {
-        if self.state == PlayState::Stopped || self.output_unavailable() {
-            return false;
-        }
-        let target = clamp_seek_target(pos, self.current_duration);
-        if self.backend.try_seek(target).is_ok() {
-            *self.position_offset.lock().unwrap() = Duration::ZERO;
-            self.set_forced_position(target);
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn seek_relative(&self, offset_seconds: i64) {
+    pub fn seek_relative(&mut self, offset_seconds: i64) {
         let _ = self.seek_relative_micros(offset_seconds.saturating_mul(1_000_000));
     }
 
     /// 相对当前进度偏移。正值前进，负值后退。成功 seek 返回 `Some(新位置)`。
     /// 调用方负责把越过曲尾的情况当成 Next；本方法只 saturate 到 0 并 clamp 末端。
-    pub fn seek_relative_micros(&self, offset_micros: i64) -> Option<Duration> {
+    pub fn seek_relative_micros(&mut self, offset_micros: i64) -> Option<Duration> {
         if self.state == PlayState::Stopped {
             return None;
         }
@@ -399,34 +298,6 @@ impl Player {
             current.saturating_add(Duration::from_micros(offset_micros as u64))
         };
         self.seek_to(requested).then_some(self.position())
-    }
-
-    pub fn set_volume(&self, percent: u8) {
-        self.logical_volume
-            .store(percent.min(100), Ordering::Relaxed);
-        self.apply_volume();
-    }
-
-    pub fn volume(&self) -> u8 {
-        self.logical_volume.load(Ordering::Relaxed)
-    }
-
-    pub fn set_muted(&self, muted: bool) {
-        self.muted.store(muted, Ordering::Relaxed);
-        self.apply_volume();
-    }
-
-    pub fn is_muted(&self) -> bool {
-        self.muted.load(Ordering::Relaxed)
-    }
-
-    pub fn set_spectrum_enabled(&self, enabled: bool) {
-        self.spectrum_enabled.store(enabled, Ordering::Relaxed);
-        self.refresh_spectrum_live();
-    }
-
-    pub fn output_unavailable(&self) -> bool {
-        self.output_fault.is_some()
     }
 
     fn start_recovery(&mut self) {
@@ -463,7 +334,181 @@ impl Player {
         }
     }
 
-    pub fn drain_events(&mut self) -> Vec<PlayerEvent> {
+    fn advance_generation(&self) -> u64 {
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        self.clear_pcm();
+        generation
+    }
+
+    fn mark_stopped(&mut self) {
+        self.state = PlayState::Stopped;
+        self.is_playing.store(false, Ordering::Relaxed);
+        self.spectrum_live.store(false, Ordering::Relaxed);
+    }
+
+    fn apply_volume(&self) {
+        let volume = if self.muted.load(Ordering::Relaxed) {
+            0.0
+        } else {
+            f32::from(self.logical_volume.load(Ordering::Relaxed)) / 100.0
+        };
+        self.backend.set_volume(volume);
+    }
+
+    fn refresh_spectrum_live(&self) {
+        let live = self.spectrum_enabled.load(Ordering::Relaxed)
+            && self.is_playing.load(Ordering::Relaxed);
+        self.spectrum_live.store(live, Ordering::Relaxed);
+        if !live {
+            self.clear_pcm();
+        }
+    }
+
+    fn clear_pcm(&self) {
+        if let Ok(mut slot) = self.pcm_slot.lock() {
+            *slot = None;
+        }
+    }
+
+    fn set_forced_position(&self, position: Duration) {
+        *self
+            .force_position
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(position);
+    }
+}
+
+impl PlaybackBackend for Player {
+    fn state(&self) -> PlayState {
+        self.state
+    }
+
+    fn current_path(&self) -> Option<&Path> {
+        self.current_path.as_deref()
+    }
+
+    fn play(&mut self, path: &Path) -> Result<(), String> {
+        self.load(path, PlayState::Playing)
+    }
+
+    /// 解码并装上曲目，保持暂停。Rodio 的 `append` 会解除 `stopped`，
+    /// 必须在 append 之前把 Player 置为 paused，否则会直接出声。
+    fn open(&mut self, path: &Path) -> Result<(), String> {
+        self.load(path, PlayState::Paused)
+    }
+
+    /// 同 `open`，但从指定位置开始，用于恢复上次会话。
+    fn open_at(&mut self, path: &Path, position: Duration) -> Result<(), String> {
+        self.load_at(path, PlayState::Paused, position)
+    }
+
+    fn pause(&mut self) {
+        // 恢复期间收到 Pause，取消本次恢复；后台创建的播放器始终保持暂停。
+        self.recovery = None;
+        if self.state == PlayState::Playing {
+            self.backend.pause();
+            self.state = PlayState::Paused;
+            self.is_playing.store(false, Ordering::Relaxed);
+            self.refresh_spectrum_live();
+        }
+    }
+
+    fn resume(&mut self) {
+        if self.output_unavailable() {
+            self.start_recovery();
+            return;
+        }
+        if self.state == PlayState::Paused {
+            self.backend.play();
+            self.state = PlayState::Playing;
+            self.is_playing.store(true, Ordering::Relaxed);
+            self.refresh_spectrum_live();
+        }
+    }
+
+    fn stop(&mut self) {
+        self.recovery = None;
+        if self.output_fault.is_some() {
+            self.output_fault = Some(Duration::ZERO);
+        }
+        let _ = self.advance_generation();
+        self.backend.stop();
+        self.state = PlayState::Stopped;
+        self.current_path = None;
+        self.current_duration = None;
+        *self.position_offset.lock().unwrap() = Duration::ZERO;
+        self.set_forced_position(Duration::ZERO);
+        self.is_playing.store(false, Ordering::Relaxed);
+        self.refresh_spectrum_live();
+    }
+
+    fn position(&self) -> Duration {
+        if let Some(position) = self.output_fault {
+            return position;
+        }
+        let backend = self.backend.get_pos() + *self.position_offset.lock().unwrap();
+        let mut forced = self
+            .force_position
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(fallback) = *forced {
+            let delta = backend.abs_diff(fallback);
+            if delta <= POSITION_TRUST_WINDOW {
+                *forced = None;
+                return backend;
+            }
+            return fallback;
+        }
+        backend
+    }
+
+    fn duration(&self) -> Option<Duration> {
+        self.current_duration
+    }
+
+    fn seek_to(&mut self, pos: Duration) -> bool {
+        if self.state == PlayState::Stopped || self.output_unavailable() {
+            return false;
+        }
+        let target = clamp_seek_target(pos, self.current_duration);
+        if self.backend.try_seek(target).is_ok() {
+            *self.position_offset.lock().unwrap() = Duration::ZERO;
+            self.set_forced_position(target);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn volume(&self) -> u8 {
+        self.logical_volume.load(Ordering::Relaxed)
+    }
+
+    fn set_volume(&mut self, percent: u8) {
+        self.logical_volume
+            .store(percent.min(100), Ordering::Relaxed);
+        self.apply_volume();
+    }
+
+    fn is_muted(&self) -> bool {
+        self.muted.load(Ordering::Relaxed)
+    }
+
+    fn set_muted(&mut self, muted: bool) {
+        self.muted.store(muted, Ordering::Relaxed);
+        self.apply_volume();
+    }
+
+    fn set_spectrum_enabled(&mut self, enabled: bool) {
+        self.spectrum_enabled.store(enabled, Ordering::Relaxed);
+        self.refresh_spectrum_live();
+    }
+
+    fn output_unavailable(&self) -> bool {
+        self.output_fault.is_some()
+    }
+
+    fn drain_events(&mut self) -> Vec<PlayerEvent> {
         if let Some(recovery) = &self.recovery {
             match recovery.try_recv() {
                 Ok(Ok(mut player)) => {
@@ -544,49 +589,6 @@ impl Player {
             drained.push(frame.into_player_event());
         }
         drained
-    }
-
-    fn advance_generation(&self) -> u64 {
-        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        self.clear_pcm();
-        generation
-    }
-
-    fn mark_stopped(&mut self) {
-        self.state = PlayState::Stopped;
-        self.is_playing.store(false, Ordering::Relaxed);
-        self.spectrum_live.store(false, Ordering::Relaxed);
-    }
-
-    fn apply_volume(&self) {
-        let volume = if self.muted.load(Ordering::Relaxed) {
-            0.0
-        } else {
-            f32::from(self.logical_volume.load(Ordering::Relaxed)) / 100.0
-        };
-        self.backend.set_volume(volume);
-    }
-
-    fn refresh_spectrum_live(&self) {
-        let live = self.spectrum_enabled.load(Ordering::Relaxed)
-            && self.is_playing.load(Ordering::Relaxed);
-        self.spectrum_live.store(live, Ordering::Relaxed);
-        if !live {
-            self.clear_pcm();
-        }
-    }
-
-    fn clear_pcm(&self) {
-        if let Ok(mut slot) = self.pcm_slot.lock() {
-            *slot = None;
-        }
-    }
-
-    fn set_forced_position(&self, position: Duration) {
-        *self
-            .force_position
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(position);
     }
 }
 

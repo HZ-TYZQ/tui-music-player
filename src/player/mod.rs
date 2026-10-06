@@ -1,5 +1,8 @@
 //! 播放后端公共接口。
 
+use std::path::Path;
+use std::time::Duration;
+
 pub const SPECTRUM_BANDS: usize = 512;
 pub const SPECTRUM_THRESHOLD_DB: f32 = -72.0;
 
@@ -22,6 +25,38 @@ pub enum PlayerEvent {
         magnitudes: Vec<f32>,
         sample_rate: u32,
     },
+}
+
+/// App 对播放后端的全部要求：装载单首曲目、控制播放、报告状态与事件。
+///
+/// 队列、历史、随机和循环都由 App 负责，后端只管当前这一首。
+/// 正式实现是基于 Rodio 的 [`Player`]；App 的测试使用不出声的假后端。
+pub trait PlaybackBackend {
+    fn state(&self) -> PlayState;
+    fn current_path(&self) -> Option<&Path>;
+    /// 装载并立即播放；失败时之前的曲目保持不变。
+    fn play(&mut self, path: &Path) -> Result<(), String>;
+    /// 装载但保持暂停。
+    fn open(&mut self, path: &Path) -> Result<(), String>;
+    /// 同 `open`，但从指定位置开始，用于恢复上次会话。
+    fn open_at(&mut self, path: &Path, position: Duration) -> Result<(), String>;
+    fn pause(&mut self);
+    /// 输出中断时改为在后台重新打开输出设备，结果以事件报告。
+    fn resume(&mut self);
+    fn stop(&mut self);
+    fn position(&self) -> Duration;
+    /// 解码器报告的总时长；不知道时为 None。
+    fn duration(&self) -> Option<Duration>;
+    /// 停止状态或输出中断时返回 false。
+    fn seek_to(&mut self, position: Duration) -> bool;
+    fn volume(&self) -> u8;
+    fn set_volume(&mut self, percent: u8);
+    fn is_muted(&self) -> bool;
+    fn set_muted(&mut self, muted: bool);
+    fn set_spectrum_enabled(&mut self, enabled: bool);
+    /// 音频输出中断、等待恢复时为 true。
+    fn output_unavailable(&self) -> bool;
+    fn drain_events(&mut self) -> Vec<PlayerEvent>;
 }
 
 mod backend;
