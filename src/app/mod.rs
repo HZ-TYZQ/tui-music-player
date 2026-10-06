@@ -88,24 +88,6 @@ impl App {
         )
     }
 
-    #[cfg(test)]
-    fn new_for_tests(
-        library_dir: PathBuf,
-        paths: AppPaths,
-        config: AppConfig,
-        initial_warning: Option<String>,
-        save_config_on_exit: bool,
-    ) -> Result<Self, String> {
-        Self::with_player(
-            Box::new(Player::new_for_tests()?),
-            library_dir,
-            paths,
-            config,
-            initial_warning,
-            save_config_on_exit,
-        )
-    }
-
     fn with_player(
         mut player: Box<dyn PlaybackBackend>,
         library_dir: PathBuf,
@@ -210,6 +192,19 @@ impl App {
     }
 
     pub fn on_tick(&mut self) {
+        self.drain_library_events();
+        self.sync_lyrics();
+        self.catalog.tick_search();
+        self.restore_pending_selection();
+        self.clamp_selections();
+        self.drain_player_events();
+
+        if self.config.visualizer_enabled && self.playback.player.state() != PlayState::Playing {
+            self.playback.spectrum.fade_step();
+        }
+    }
+
+    fn drain_library_events(&mut self) {
         for event in self.scanner.drain_events() {
             match event {
                 LibraryEvent::ScanStarted => self.scan_progress = Some((0, 0)),
@@ -226,12 +221,10 @@ impl App {
                 }
             }
         }
+    }
 
-        self.sync_lyrics();
-        self.catalog.tick_search();
-        self.restore_pending_selection();
-        self.clamp_selections();
-
+    /// 处理播放后端的事件：自然播完、播放出错、输出中断与恢复、频谱帧。
+    pub(super) fn drain_player_events(&mut self) {
         for event in self.playback.player.drain_events() {
             match event {
                 PlayerEvent::EndOfStream => self.play_next(true),
@@ -267,10 +260,6 @@ impl App {
                     }
                 }
             }
-        }
-
-        if self.config.visualizer_enabled && self.playback.player.state() != PlayState::Playing {
-            self.playback.spectrum.fade_step();
         }
     }
 

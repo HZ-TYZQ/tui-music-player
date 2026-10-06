@@ -4,7 +4,8 @@ use std::time::{Duration, Instant};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::config::{AppConfig, AppPaths};
-use crate::player::PlayState;
+use crate::player::fake::{FakeBackend, FakeControl};
+use crate::player::{PlayState, PlaybackBackend, Player};
 use crate::track::{RepeatMode, SortKey, Track};
 
 use crate::ui::{MouseInput, ViewLayout};
@@ -12,15 +13,32 @@ use crate::ui::{MouseInput, ViewLayout};
 use super::playback::short_reason;
 use super::{Action, App, BagUpdate, Overlay};
 
+/// 装着假后端的 App；临时目录里有一个空的 music 子目录作曲库。
 fn test_app(config: AppConfig) -> (tempfile::TempDir, App) {
+    let (temp, app, _) = test_app_with_control(config);
+    (temp, app)
+}
+
+/// 同 `test_app`，并交回假后端的控制句柄，用来注入播完、出错和输出中断。
+fn test_app_with_control(config: AppConfig) -> (tempfile::TempDir, App, FakeControl) {
     let temp = tempfile::tempdir().unwrap();
     std::fs::create_dir(temp.path().join("music")).unwrap();
-    let app = app_in(temp.path(), "music", config);
-    (temp, app)
+    let (backend, control) = FakeBackend::new();
+    let app = app_with_backend(temp.path(), "music", config, Box::new(backend));
+    (temp, app, control)
 }
 
 /// 在已有的临时目录上再开一个 App，模拟退出后重新启动。
 fn app_in(root: &Path, library: &str, config: AppConfig) -> App {
+    app_with_backend(root, library, config, Box::new(FakeBackend::new().0))
+}
+
+fn app_with_backend(
+    root: &Path,
+    library: &str,
+    config: AppConfig,
+    backend: Box<dyn PlaybackBackend>,
+) -> App {
     let music = root.join(library);
     let paths = AppPaths::from_roots(
         root.join("config"),
@@ -28,7 +46,7 @@ fn app_in(root: &Path, library: &str, config: AppConfig) -> App {
         root.join("cache"),
         Some(music.clone()),
     );
-    App::new_for_tests(music, paths, config, None, false).unwrap()
+    App::with_player(backend, music, paths, config, None, false).unwrap()
 }
 
 fn track(path: PathBuf) -> Track {
@@ -1013,7 +1031,7 @@ fn clicks_below_the_last_row_and_outside_the_list_are_ignored() {
 fn clicking_the_progress_bar_seeks_within_the_current_track() {
     let (temp, mut app) = test_app(AppConfig::default());
     let long = temp.path().join("music").join("long.wav");
-    write_long_test_wav(&long);
+    write_test_wav(&long);
     let mut item = track(long.clone());
     item.duration = Some(Duration::from_secs(100));
     app.catalog.set_tracks(vec![item]);
@@ -1041,7 +1059,7 @@ fn clicking_the_progress_bar_seeks_within_the_current_track() {
 fn digit_keys_jump_to_tenths_of_the_track() {
     let (temp, mut app) = test_app(AppConfig::default());
     let long = temp.path().join("music").join("long.wav");
-    write_long_test_wav(&long);
+    write_test_wav(&long);
     let mut item = track(long.clone());
     item.duration = Some(Duration::from_secs(100));
     app.catalog.set_tracks(vec![item]);
@@ -1068,7 +1086,7 @@ fn digit_keys_jump_to_tenths_of_the_track() {
 fn long_seek_moves_a_minute_with_shift_arrows_or_uppercase_keys() {
     let (temp, mut app) = test_app(AppConfig::default());
     let long = temp.path().join("music").join("long.wav");
-    write_long_test_wav(&long);
+    write_test_wav(&long);
     let mut item = track(long.clone());
     item.duration = Some(Duration::from_secs(100));
     app.catalog.set_tracks(vec![item]);
@@ -1210,10 +1228,6 @@ fn overlay_clicks_go_to_the_overlay_list_not_the_library() {
     assert_eq!(app.view.selected, 0);
 }
 
-fn write_long_test_wav(path: &Path) {
-    write_wav(path, 8_000, 8_000 * 100);
-}
-
 fn write_test_wav(path: &Path) {
     write_wav(path, 8_000, 800);
 }
@@ -1237,10 +1251,11 @@ fn write_wav(path: &Path, sample_rate: u32, sample_count: usize) {
     std::fs::write(path, wav).unwrap();
 }
 
-/// 播放 100 秒的测试曲并停在 `at`，返回曲目路径。
+/// 播放时长记为 100 秒的测试曲并停在 `at`，返回曲目路径。
+/// 假后端不解码，时长取自曲目信息，文件本身用短 WAV 就够了。
 fn play_long_track_at(temp: &Path, app: &mut App, at: Duration) -> PathBuf {
     let long = temp.join("music").join("long.wav");
-    write_long_test_wav(&long);
+    write_test_wav(&long);
     let mut item = track(long.clone());
     item.duration = Some(Duration::from_secs(100));
     app.catalog.set_tracks(vec![item]);
@@ -1507,4 +1522,119 @@ fn the_lyrics_pane_stays_beside_the_library_without_lyrics() {
     app.apply_scan_finished(app.catalog.tracks().to_vec(), Vec::new());
     app.sync_lyrics();
     assert!(app.lyrics().is_some());
+}
+
+#[test]
+fn a_natural_end_moves_on_and_repeat_one_replays_the_track() {
+    let (temp, mut app, control) = test_app_with_control(AppConfig::default());
+    let music = temp.path().join("music");
+    let paths: Vec<PathBuf> = ["a.wav", "b.wav"]
+        .iter()
+        .map(|name| music.join(name))
+        .collect();
+    for path in &paths {
+        write_test_wav(path);
+    }
+    app.catalog
+        .set_tracks(paths.iter().map(|path| track(path.clone())).collect());
+    app.play_index(0, false, BagUpdate::Reanchor).unwrap();
+
+    control.finish_track();
+    app.drain_player_events();
+    assert_eq!(app.playback.playing_index, Some(1));
+    assert_eq!(app.player().state(), PlayState::Playing);
+
+    app.config.repeat = RepeatMode::One;
+    control.finish_track();
+    app.drain_player_events();
+    assert_eq!(app.playback.playing_index, Some(1));
+    assert_eq!(app.player().current_path(), Some(paths[1].as_path()));
+    assert_eq!(app.playback.history, vec![paths[0].clone()]);
+}
+
+#[test]
+fn a_decode_error_mid_track_skips_ahead_and_says_why() {
+    let (temp, mut app, control) = test_app_with_control(AppConfig {
+        repeat: RepeatMode::One,
+        ..AppConfig::default()
+    });
+    let music = temp.path().join("music");
+    let paths: Vec<PathBuf> = ["a.wav", "b.wav"]
+        .iter()
+        .map(|name| music.join(name))
+        .collect();
+    for path in &paths {
+        write_test_wav(path);
+    }
+    let mut first = track(paths[0].clone());
+    first.title = "第一首".to_owned();
+    app.catalog.set_tracks(vec![first, track(paths[1].clone())]);
+    app.play_index(0, false, BagUpdate::Reanchor).unwrap();
+
+    // 单曲循环也不应重播出错的曲目。
+    control.fail_track("帧校验失败");
+    app.drain_player_events();
+    assert_eq!(app.playback.playing_index, Some(1));
+    let message = app.view.message.clone().expect("跳过提示丢失");
+    assert!(message.contains("已跳过“第一首”"), "{message}");
+    assert!(message.contains("帧校验失败"), "{message}");
+}
+
+#[test]
+fn an_output_failure_holds_the_track_until_space_recovers_it() {
+    let (temp, mut app, control) = test_app_with_control(AppConfig::default());
+    let music = temp.path().join("music");
+    let paths: Vec<PathBuf> = ["a.wav", "b.wav"]
+        .iter()
+        .map(|name| music.join(name))
+        .collect();
+    for path in &paths {
+        write_test_wav(path);
+    }
+    app.catalog
+        .set_tracks(paths.iter().map(|path| track(path.clone())).collect());
+    app.play_index(0, false, BagUpdate::Reanchor).unwrap();
+
+    control.break_output("设备已移除");
+    app.drain_player_events();
+    assert!(
+        app.view
+            .message
+            .as_deref()
+            .unwrap()
+            .contains("音频输出中断")
+    );
+
+    // 输出中断期间不切歌，曲目和进度都保留。
+    app.dispatch(Action::Next);
+    assert_eq!(app.playback.playing_index, Some(0));
+    assert!(app.view.message.as_deref().unwrap().contains("按空格重试"));
+
+    app.dispatch(Action::TogglePause);
+    assert_eq!(app.view.message.as_deref(), Some("正在恢复音频输出…"));
+    app.drain_player_events();
+    assert_eq!(app.view.message.as_deref(), Some("音频输出已恢复"));
+    assert_eq!(app.player().state(), PlayState::Playing);
+    assert_eq!(app.playback.playing_index, Some(0));
+}
+
+/// App 的其余测试都用假后端；这一条确认真实的 Rodio 后端也能经 App 播放和暂停。
+#[test]
+fn the_rodio_backend_plays_and_pauses_through_app() {
+    let temp = tempfile::tempdir().unwrap();
+    let music = temp.path().join("music");
+    std::fs::create_dir(&music).unwrap();
+    let path = music.join("a.wav");
+    write_test_wav(&path);
+    let player = Player::new_for_tests().unwrap();
+    let mut app = app_with_backend(temp.path(), "music", AppConfig::default(), Box::new(player));
+    app.catalog.set_tracks(vec![track(path.clone())]);
+
+    app.play_selected();
+    assert_eq!(app.playback.playing_index, Some(0));
+    assert_eq!(app.player().state(), PlayState::Playing);
+    assert_eq!(app.player().current_path(), Some(path.as_path()));
+
+    app.dispatch(Action::TogglePause);
+    assert_eq!(app.player().state(), PlayState::Paused);
 }

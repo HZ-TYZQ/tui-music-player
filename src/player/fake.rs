@@ -1,0 +1,194 @@
+//! 测试用的假后端：不解码、不出声。
+//!
+//! 文件存在、非空且以 `RIFF` 开头就当作能播放；位置只在跳转时改变；
+//! 曲目播完、解码出错和输出中断都由测试通过 [`FakeControl`] 注入。
+//! 输出中断后的恢复与 Rodio 后端一致：`resume` 发起，下一次取事件时完成。
+
+use std::cell::RefCell;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::time::Duration;
+
+use super::{PlayState, PlaybackBackend, PlayerEvent};
+
+/// 测试端也要改动的状态，放在共享单元里。
+struct FakeState {
+    state: PlayState,
+    position: Duration,
+    volume: u8,
+    muted: bool,
+    output_down: bool,
+    recovering: bool,
+    events: Vec<PlayerEvent>,
+}
+
+pub(crate) struct FakeBackend {
+    shared: Rc<RefCell<FakeState>>,
+    current: Option<PathBuf>,
+}
+
+/// 测试一侧持有的句柄，用来查看和操纵装进 App 的假后端。
+#[derive(Clone)]
+pub(crate) struct FakeControl(Rc<RefCell<FakeState>>);
+
+impl FakeBackend {
+    pub(crate) fn new() -> (Self, FakeControl) {
+        let state = Rc::new(RefCell::new(FakeState {
+            state: PlayState::Stopped,
+            position: Duration::ZERO,
+            volume: 100,
+            muted: false,
+            output_down: false,
+            recovering: false,
+            events: Vec::new(),
+        }));
+        let backend = Self {
+            shared: Rc::clone(&state),
+            current: None,
+        };
+        (backend, FakeControl(state))
+    }
+
+    fn load(&mut self, path: &Path, target: PlayState, position: Duration) -> Result<(), String> {
+        let mut state = self.shared.borrow_mut();
+        if state.output_down {
+            return Err("音频输出中断，请按空格重试".to_owned());
+        }
+        let bytes = fs::read(path).map_err(|_| format!("音频文件不存在: {}", path.display()))?;
+        if !bytes.starts_with(b"RIFF") {
+            return Err(format!("无法识别或解码 {}", path.display()));
+        }
+        state.state = target;
+        state.position = position;
+        self.current = Some(path.to_path_buf());
+        Ok(())
+    }
+}
+
+impl FakeControl {
+    /// 当前曲目自然播完。
+    pub(crate) fn finish_track(&self) {
+        let mut state = self.0.borrow_mut();
+        state.state = PlayState::Stopped;
+        state.events.push(PlayerEvent::EndOfStream);
+    }
+
+    /// 当前曲目播放途中解码出错。
+    pub(crate) fn fail_track(&self, error: &str) {
+        let mut state = self.0.borrow_mut();
+        state.state = PlayState::Stopped;
+        state.events.push(PlayerEvent::Error(error.to_owned()));
+    }
+
+    /// 音频输出设备中断：暂停并保留位置，直到恢复成功。
+    pub(crate) fn break_output(&self, error: &str) {
+        let mut state = self.0.borrow_mut();
+        state.output_down = true;
+        if state.state == PlayState::Playing {
+            state.state = PlayState::Paused;
+        }
+        state
+            .events
+            .push(PlayerEvent::OutputError(error.to_owned()));
+    }
+}
+
+impl PlaybackBackend for FakeBackend {
+    fn state(&self) -> PlayState {
+        self.shared.borrow().state
+    }
+
+    fn current_path(&self) -> Option<&Path> {
+        self.current.as_deref()
+    }
+
+    fn play(&mut self, path: &Path) -> Result<(), String> {
+        self.load(path, PlayState::Playing, Duration::ZERO)
+    }
+
+    fn open(&mut self, path: &Path) -> Result<(), String> {
+        self.load(path, PlayState::Paused, Duration::ZERO)
+    }
+
+    fn open_at(&mut self, path: &Path, position: Duration) -> Result<(), String> {
+        self.load(path, PlayState::Paused, position)
+    }
+
+    fn pause(&mut self) {
+        let mut state = self.shared.borrow_mut();
+        state.recovering = false;
+        if state.state == PlayState::Playing {
+            state.state = PlayState::Paused;
+        }
+    }
+
+    fn resume(&mut self) {
+        let mut state = self.shared.borrow_mut();
+        if state.output_down {
+            state.recovering = true;
+        } else if state.state == PlayState::Paused {
+            state.state = PlayState::Playing;
+        }
+    }
+
+    fn stop(&mut self) {
+        let mut state = self.shared.borrow_mut();
+        state.recovering = false;
+        state.state = PlayState::Stopped;
+        state.position = Duration::ZERO;
+        self.current = None;
+    }
+
+    fn position(&self) -> Duration {
+        self.shared.borrow().position
+    }
+
+    fn duration(&self) -> Option<Duration> {
+        // 不解码就不知道时长；App 会退回扫描时记下的曲目时长。
+        None
+    }
+
+    fn seek_to(&mut self, position: Duration) -> bool {
+        let mut state = self.shared.borrow_mut();
+        if state.state == PlayState::Stopped || state.output_down {
+            return false;
+        }
+        state.position = position;
+        true
+    }
+
+    fn volume(&self) -> u8 {
+        self.shared.borrow().volume
+    }
+
+    fn set_volume(&mut self, percent: u8) {
+        self.shared.borrow_mut().volume = percent.min(100);
+    }
+
+    fn is_muted(&self) -> bool {
+        self.shared.borrow().muted
+    }
+
+    fn set_muted(&mut self, muted: bool) {
+        self.shared.borrow_mut().muted = muted;
+    }
+
+    fn set_spectrum_enabled(&mut self, _enabled: bool) {}
+
+    fn output_unavailable(&self) -> bool {
+        self.shared.borrow().output_down
+    }
+
+    fn drain_events(&mut self) -> Vec<PlayerEvent> {
+        let mut state = self.shared.borrow_mut();
+        let mut events = std::mem::take(&mut state.events);
+        if state.recovering {
+            state.recovering = false;
+            state.output_down = false;
+            state.state = PlayState::Playing;
+            events.push(PlayerEvent::OutputRecovered);
+        }
+        events
+    }
+}

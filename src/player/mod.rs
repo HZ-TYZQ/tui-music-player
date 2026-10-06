@@ -60,6 +60,8 @@ pub trait PlaybackBackend {
 }
 
 mod backend;
+#[cfg(test)]
+pub(crate) mod fake;
 mod spectrum;
 
 pub use self::backend::Player;
