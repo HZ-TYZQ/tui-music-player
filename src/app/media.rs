@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use crate::media::{MediaEvent, MediaSnapshot};
 use crate::player::PlayState;
-use crate::track::RepeatMode;
 
 use super::App;
 
@@ -114,22 +113,8 @@ impl App {
         if !self.queue.is_empty() {
             return true;
         }
-        if self.tracks.is_empty() {
-            return false;
-        }
-        if self.config.repeat != RepeatMode::None {
-            return true;
-        }
-        if self.config.shuffle {
-            if self.shuffle_order.is_empty() {
-                return true;
-            }
-            return self.shuffle_cursor < self.shuffle_order.len();
-        }
-        match self.playing_index {
-            Some(index) => index + 1 < self.tracks.len(),
-            None => !self.tracks.is_empty(),
-        }
+        self.order
+            .has_next(self.tracks.len(), self.playing_index, self.playback_mode())
     }
 }
 

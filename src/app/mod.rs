@@ -3,6 +3,7 @@
 mod action;
 mod lyrics;
 mod media;
+mod order;
 mod playback;
 mod playlists;
 mod queue;
@@ -29,6 +30,7 @@ use crate::spectrum::SpectrumProcessor;
 use crate::track::Track;
 
 pub use action::Action;
+use order::PlaybackOrder;
 use playback::Skip;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,11 +76,9 @@ pub struct App {
     spectrum: SpectrumProcessor,
     paths: AppPaths,
     library: LibraryWorker,
-    rng_state: u64,
     save_config_on_exit: bool,
     pending_selected_path: Option<PathBuf>,
-    shuffle_order: Vec<usize>,
-    shuffle_cursor: usize,
+    order: PlaybackOrder,
     media_events: Vec<MediaEvent>,
     /// 上次退出时的曲目与位置，等第一次扫描完成、曲库就绪后再恢复。
     pending_session: Option<Session>,
@@ -165,14 +165,14 @@ impl App {
             spectrum: SpectrumProcessor::new(),
             paths,
             library,
-            rng_state: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos() as u64,
             save_config_on_exit,
             pending_selected_path: None,
-            shuffle_order: Vec::new(),
-            shuffle_cursor: 0,
+            order: PlaybackOrder::new(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos() as u64,
+            ),
             media_events: Vec::new(),
             pending_session,
             lyrics: None,
@@ -290,8 +290,7 @@ impl App {
             if let Some(current) = self.playing_index {
                 self.reanchor_shuffle_bag(current);
             } else {
-                self.shuffle_order.clear();
-                self.shuffle_cursor = 0;
+                self.order.clear();
             }
         }
         self.pending_selected_path = selected_path;

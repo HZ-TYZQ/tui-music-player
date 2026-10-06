@@ -349,8 +349,8 @@ fn shuffle_repeat_all_reshuffles_after_bag() {
     }
     let first_of_next_round = app.next_library_index(true);
     assert!(first_of_next_round.is_some());
-    assert_eq!(app.shuffle_cursor, 1);
-    assert_eq!(app.shuffle_order.len(), 3);
+    assert_eq!(app.order.cursor(), 1);
+    assert_eq!(app.order.bag().len(), 3);
 }
 
 #[test]
@@ -845,8 +845,8 @@ fn resorting_reanchors_the_shuffle_bag_onto_the_new_indices() {
     );
 
     // 重排让所有下标失效，随机袋必须重建到新下标上，并从当前曲目开始。
-    assert_eq!(app.shuffle_order.first().copied(), app.playing_index);
-    let mut covered = app.shuffle_order.clone();
+    assert_eq!(app.order.bag().first().copied(), app.playing_index);
+    let mut covered = app.order.bag().to_vec();
     covered.sort_unstable();
     assert_eq!(covered, (0..app.tracks.len()).collect::<Vec<_>>());
 }

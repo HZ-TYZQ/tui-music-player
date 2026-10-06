@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use crate::player::PlayState;
-use crate::track::{PlaybackMode, RepeatMode};
+use crate::track::PlaybackMode;
 
 use super::{App, BagUpdate};
 
@@ -211,83 +211,14 @@ impl App {
         current: Option<usize>,
         natural_end: bool,
     ) -> Option<usize> {
-        if self.config.shuffle {
-            if natural_end && self.config.repeat == RepeatMode::One {
-                return current;
-            }
-            return self.next_from_shuffle_bag(current);
-        }
-        match self.config.repeat {
-            RepeatMode::One if natural_end => current,
-            RepeatMode::All | RepeatMode::One if !self.tracks.is_empty() => {
-                Some((current.unwrap_or(0) + 1) % self.tracks.len())
-            }
-            RepeatMode::All | RepeatMode::One => None,
-            RepeatMode::None => match current {
-                Some(index) if index + 1 < self.tracks.len() => Some(index + 1),
-                None if !self.tracks.is_empty() => Some(0),
-                _ => None,
-            },
-        }
+        let mode = self.playback_mode();
+        self.order
+            .next(self.tracks.len(), current, natural_end, mode)
     }
 
-    fn next_from_shuffle_bag(&mut self, current: Option<usize>) -> Option<usize> {
-        if self.tracks.is_empty() {
-            return None;
-        }
-        if self.shuffle_order.is_empty() {
-            self.reanchor_shuffle_bag(current.unwrap_or(0));
-        }
-        if self.shuffle_cursor >= self.shuffle_order.len() {
-            match self.config.repeat {
-                RepeatMode::None => return None,
-                RepeatMode::All | RepeatMode::One => {
-                    let avoid = self.shuffle_order.last().copied().or(current).unwrap_or(0);
-                    self.reshuffle_round(avoid);
-                }
-            }
-        }
-        let next = self.shuffle_order.get(self.shuffle_cursor).copied()?;
-        self.shuffle_cursor += 1;
-        Some(next)
-    }
-
+    /// 随机袋以 `current` 为本轮第一首重新洗牌。
     pub(super) fn reanchor_shuffle_bag(&mut self, current: usize) {
-        if self.tracks.is_empty() {
-            self.shuffle_order.clear();
-            self.shuffle_cursor = 0;
-            return;
-        }
-        let current = current.min(self.tracks.len() - 1);
-        let mut rest: Vec<usize> = (0..self.tracks.len())
-            .filter(|index| *index != current)
-            .collect();
-        self.shuffle_slice(&mut rest);
-        self.shuffle_order = std::iter::once(current).chain(rest).collect();
-        self.shuffle_cursor = 1;
-    }
-
-    fn reshuffle_round(&mut self, avoid_first: usize) {
-        let mut order: Vec<usize> = (0..self.tracks.len()).collect();
-        self.shuffle_slice(&mut order);
-        if order.len() > 1 && order[0] == avoid_first {
-            let swap = (1..order.len())
-                .find(|index| order[*index] != avoid_first)
-                .unwrap_or(1);
-            order.swap(0, swap);
-        }
-        self.shuffle_order = order;
-        self.shuffle_cursor = 0;
-    }
-
-    fn shuffle_slice(&mut self, items: &mut [usize]) {
-        if items.len() < 2 {
-            return;
-        }
-        for index in (1..items.len()).rev() {
-            let other = self.random_index(index + 1);
-            items.swap(index, other);
-        }
+        self.order.reanchor(self.tracks.len(), current);
     }
 
     pub(super) fn play_previous(&mut self) {
@@ -362,8 +293,7 @@ impl App {
             }
             self.message = Some("已开启随机播放".to_owned());
         } else {
-            self.shuffle_order.clear();
-            self.shuffle_cursor = 0;
+            self.order.clear();
             self.message = Some("已关闭随机播放".to_owned());
         }
     }
@@ -411,13 +341,6 @@ impl App {
             self.spectrum.reset_output();
             self.message = Some("已关闭音频频谱".to_owned());
         }
-    }
-
-    fn random_index(&mut self, upper: usize) -> usize {
-        self.rng_state ^= self.rng_state << 13;
-        self.rng_state ^= self.rng_state >> 7;
-        self.rng_state ^= self.rng_state << 17;
-        (self.rng_state as usize) % upper
     }
 }
 
