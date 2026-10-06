@@ -1,5 +1,5 @@
 Name:           music-player
-Version:        1.3.2
+Version:        1.3.3
 Release:        1%{?dist}
 Summary:        Terminal music library player
 
@@ -56,6 +56,11 @@ install -Dpm 0644 assets/icons/%{name}-48.png %{buildroot}%{_datadir}/icons/hico
 %{_datadir}/icons/hicolor/48x48/apps/%{name}.png
 
 %changelog
+* Tue Oct 06 2026 HZ-TYZQ - 1.3.3-1
+- Keep the lyrics pane beside the library even for tracks without lyrics
+- Show library tracks on two rows: title and duration, then artist,
+  album and format
+
 * Mon Sep 21 2026 HZ-TYZQ - 1.3.2-1
 - Add synchronized LRC lyrics from sidecar files or embedded tags,
   decoding UTF-8, UTF-16 and GBK
