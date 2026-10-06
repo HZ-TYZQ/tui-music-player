@@ -24,7 +24,6 @@ use crate::library::{LibraryEvent, LibraryWorker};
 use crate::player::{PlayState, PlaybackBackend, Player, PlayerEvent};
 use crate::playlist::PlaylistStore;
 use crate::session::Session;
-use crate::theme::Theme;
 use crate::track::Track;
 
 pub use action::Action;
@@ -66,6 +65,8 @@ pub struct App {
     view: ViewState,
     playlists: PlaylistStore,
     config: AppConfig,
+    /// 启动时的设置。退出时与 `config` 比较，只把改过的项写回配置文件。
+    config_at_start: AppConfig,
     library_dir: PathBuf,
     scanner: LibraryWorker,
     /// 正在后台扫描时为 Some((已扫描, 已找到))。
@@ -109,7 +110,6 @@ impl App {
         let playlists = PlaylistStore::load(paths.playlists_dir.clone())
             .map_err(|error| format!("无法打开播放列表目录: {error}"))?;
         let playlist_warning = playlists.warnings().first().cloned();
-        let (theme, theme_warning) = Theme::from_config(&config.theme);
         let scanner = LibraryWorker::start(library_dir.clone(), paths.cache_db.clone());
         let pending_session =
             Session::load(&paths.session_file).filter(|session| session.library_dir == library_dir);
@@ -121,11 +121,11 @@ impl App {
             catalog: Catalog::new(),
             playback: Playback::new(player, seed),
             view: ViewState {
-                message: initial_warning.or(theme_warning).or(playlist_warning),
-                theme,
+                message: initial_warning.or(playlist_warning),
                 ..ViewState::default()
             },
             playlists,
+            config_at_start: config.clone(),
             config,
             library_dir,
             scanner,
@@ -343,8 +343,7 @@ impl App {
         self.config.volume = self.playback.player.volume();
         self.config.muted = self.playback.player.is_muted();
         self.config
-            .save(&self.paths.config_file)
-            .map_err(|error| format!("无法保存配置: {error}"))
+            .save_changes(&self.config_at_start, &self.paths.config_file)
     }
 
     pub(super) fn index_for_path(&self, path: &Path) -> Option<usize> {

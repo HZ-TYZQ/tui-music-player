@@ -91,7 +91,7 @@ impl ListView {
 }
 
 pub fn draw(frame: &mut Frame, app: &App, view: &mut ViewLayout) {
-    let theme = &app.view().theme;
+    let theme = &app.config().theme;
     let area = frame.area();
     if area.width < 42 || area.height < 12 {
         // 这一帧什么列表都没画，命中测试必须失效，否则会用上一帧的坐标误判。

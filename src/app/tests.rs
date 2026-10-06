@@ -1399,25 +1399,89 @@ fn quitting_with_nothing_loaded_clears_the_session() {
 }
 
 #[test]
-fn the_configured_theme_colors_the_screen_and_mistakes_show_in_the_footer() {
+fn the_configured_theme_colors_the_screen() {
+    use crate::theme::Theme;
     use ratatui::style::Color;
 
-    let mut config = AppConfig::default();
-    config.theme.preset = "light".to_owned();
-    config.theme.border = Some("#123456".to_owned());
-    config.theme.primary = Some("#nope".to_owned());
+    let config = AppConfig {
+        theme: Theme {
+            border: Color::Rgb(0x12, 0x34, 0x56),
+            ..Theme::default()
+        },
+        ..AppConfig::default()
+    };
     let (_temp, app) = test_app(config);
-
-    // primary 写错了，沿用 light 预设的深灰。
-    assert_eq!(app.view().theme.primary, Color::Rgb(38, 38, 38));
     let (_, backend) = render(&app, 100, 24);
     // 左上角是曲库的边框。
     assert_eq!(backend.buffer()[(0, 0)].fg, Color::Rgb(0x12, 0x34, 0x56));
-    let footer = screen_rows(&backend).pop().unwrap();
-    assert!(
-        footer.contains("主题配置有误:primary的值\"#nope\"无法识别"),
-        "{footer}"
+}
+
+/// 按 `config.kdl` 的内容启动一个能写回配置的 App。
+fn app_from_config_kdl(root: &Path, text: &str) -> App {
+    let music = root.join("music");
+    std::fs::create_dir_all(&music).unwrap();
+    let paths = AppPaths::from_roots(
+        root.join("config"),
+        root.join("data"),
+        root.join("cache"),
+        Some(music.clone()),
     );
+    crate::config::atomic_write(&paths.config_file, text.as_bytes()).unwrap();
+    let loaded = AppConfig::load(&paths).unwrap();
+    let backend = Box::new(FakeBackend::new().0);
+    App::with_player(
+        backend,
+        music,
+        paths,
+        loaded.config,
+        loaded.message,
+        loaded.writable,
+    )
+    .unwrap()
+}
+
+#[test]
+fn settings_changed_while_running_are_written_back_into_config_kdl() {
+    let temp = tempfile::tempdir().unwrap();
+    let text = "// 我的播放器
+playback {
+    volume 60 // 夜里小声点
+    shuffle #false
+}
+
+theme {
+    preset \"light\"
+}
+";
+    let mut app = app_from_config_kdl(temp.path(), text);
+    assert_eq!(app.view().message, None);
+
+    app.dispatch(Action::ChangeVolume(-5));
+    app.dispatch(Action::ToggleShuffle);
+    app.dispatch(Action::ToggleLyrics);
+    app.save_settings().unwrap();
+
+    let saved =
+        std::fs::read_to_string(temp.path().join("config/tui-music-player/config.kdl")).unwrap();
+    assert_eq!(
+        saved,
+        "// 我的播放器\nplayback {\n    volume 55 // 夜里小声点\n    shuffle #true\n}\n\ntheme {\n    preset \"light\"\n}\n\ninterface {\n    lyrics #false\n}\n"
+    );
+}
+
+#[test]
+fn a_config_kdl_with_a_syntax_error_is_never_rewritten() {
+    let temp = tempfile::tempdir().unwrap();
+    let text = "playback {\n    volume 60\n";
+    let mut app = app_from_config_kdl(temp.path(), text);
+    let message = app.view().message.clone().unwrap();
+    assert!(message.contains("有语法错误"), "{message}");
+
+    app.dispatch(Action::ToggleShuffle);
+    app.save_settings().unwrap();
+    let saved =
+        std::fs::read_to_string(temp.path().join("config/tui-music-player/config.kdl")).unwrap();
+    assert_eq!(saved, text);
 }
 
 /// 每行文字去掉空格：宽字符后面的占位格也是空格，按原样拼接无法直接比对中文。

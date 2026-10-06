@@ -1,13 +1,12 @@
-//! 界面的颜色职责、内置预设，以及按配置得出最终主题。
+//! 界面的颜色职责和内置预设。
 //!
 //! 主题刻意不包含背景色：播放器继承终端背景，只允许选中行使用局部背景。
+//! 配置文件中 `theme {}` 块的读取见 `config` 模块。
 
 use ratatui::style::Color;
 
-use crate::config::ThemeConfig;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct Theme {
+pub struct Theme {
     pub(crate) primary: Color,
     pub(crate) muted: Color,
     pub(crate) border: Color,
@@ -56,6 +55,9 @@ const PRESETS: [(&str, Theme); 3] = [
     ("terminal", TERMINAL_THEME),
 ];
 
+/// 提示里列出的可选预设名。
+pub(crate) const PRESET_NAMES: &str = "default、light、terminal";
+
 impl Default for Theme {
     fn default() -> Self {
         DEFAULT_THEME
@@ -63,67 +65,32 @@ impl Default for Theme {
 }
 
 impl Theme {
-    /// 先取预设，再逐项覆盖。预设名或某项颜色写错时只回退那一处，
-    /// 其余照常生效，并返回一行说明哪里写错了。
-    pub(crate) fn from_config(config: &ThemeConfig) -> (Self, Option<String>) {
-        let mut problems = Vec::new();
-        let name = config.preset.trim();
-        let mut theme = match PRESETS
+    /// 按名字查找内置预设，不区分大小写。
+    pub(crate) fn preset(name: &str) -> Option<Self> {
+        PRESETS
             .iter()
             .find(|(preset, _)| preset.eq_ignore_ascii_case(name))
-        {
-            Some(&(_, theme)) => theme,
-            None => {
-                problems.push(format!("未知预设 \"{name}\"，已改用 default"));
-                DEFAULT_THEME
-            }
-        };
-        let overrides = [
-            ("primary", &config.primary, &mut theme.primary),
-            ("muted", &config.muted, &mut theme.muted),
-            ("border", &config.border, &mut theme.border),
-            (
-                "selection_bg",
-                &config.selection_bg,
-                &mut theme.selection_bg,
-            ),
-            ("danger", &config.danger, &mut theme.danger),
-            (
-                "spectrum_low",
-                &config.spectrum_low,
-                &mut theme.spectrum_low,
-            ),
-            (
-                "spectrum_high",
-                &config.spectrum_high,
-                &mut theme.spectrum_high,
-            ),
-        ];
-        for (key, value, color) in overrides {
-            let Some(value) = value else {
-                continue;
-            };
-            match value.trim().parse() {
-                Ok(parsed) => *color = parsed,
-                Err(_) => problems.push(format!("{key} 的值 \"{value}\" 无法识别，已沿用预设")),
-            }
-        }
-        for key in config.unknown.keys() {
-            problems.push(format!("未知项 {key} 已忽略"));
-        }
-        let warning =
-            (!problems.is_empty()).then(|| format!("主题配置有误: {}", problems.join("；")));
-        (theme, warning)
+            .map(|&(_, theme)| theme)
+    }
+
+    /// 配置里的颜色键对应的字段；不认识的键返回 None。
+    pub(crate) fn color_mut(&mut self, key: &str) -> Option<&mut Color> {
+        Some(match key {
+            "primary" => &mut self.primary,
+            "muted" => &mut self.muted,
+            "border" => &mut self.border,
+            "selection-bg" => &mut self.selection_bg,
+            "danger" => &mut self.danger,
+            "spectrum-low" => &mut self.spectrum_low,
+            "spectrum-high" => &mut self.spectrum_high,
+            _ => return None,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn resolve(toml: &str) -> (Theme, Option<String>) {
-        Theme::from_config(&toml::from_str(toml).unwrap())
-    }
 
     #[test]
     fn default_theme_uses_fixed_white_levels_and_monochrome_spectrum() {
@@ -137,104 +104,44 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_theme_section_is_the_default_preset() {
-        assert_eq!(resolve(""), (DEFAULT_THEME, None));
-        assert_eq!(
-            Theme::from_config(&ThemeConfig::default()),
-            (DEFAULT_THEME, None)
-        );
+    fn presets_are_found_by_name_ignoring_case() {
+        assert_eq!(Theme::preset("default"), Some(DEFAULT_THEME));
+        assert_eq!(Theme::preset("Light"), Some(LIGHT_THEME));
+        assert_eq!(Theme::preset("TERMINAL"), Some(TERMINAL_THEME));
+        assert_eq!(Theme::preset("dark"), None);
+        for (name, _) in PRESETS {
+            assert!(PRESET_NAMES.contains(name));
+        }
     }
 
     #[test]
-    fn presets_are_found_by_name_ignoring_case_and_spaces() {
-        assert_eq!(resolve("preset = \"light\""), (LIGHT_THEME, None));
-        assert_eq!(resolve("preset = \" Terminal \""), (TERMINAL_THEME, None));
-    }
-
-    #[test]
-    fn overrides_replace_single_colors_of_the_preset() {
-        let (theme, warning) = resolve(
-            r##"
-            preset = "light"
-            primary = "#102030"
-            muted = "dark-gray"
-            selection_bg = "236"
-            danger = " reset "
-            "##,
-        );
-        assert_eq!(warning, None);
-        assert_eq!(
-            theme,
-            Theme {
-                primary: Color::Rgb(16, 32, 48),
-                muted: Color::DarkGray,
-                selection_bg: Color::Indexed(236),
-                danger: Color::Reset,
-                ..LIGHT_THEME
-            }
-        );
-    }
-
-    #[test]
-    fn a_bad_color_falls_back_alone_and_is_reported() {
-        let (theme, warning) = resolve(
-            r##"
-            preset = "light"
-            primary = "#12345"
-            border = "#ABCDEF"
-            "##,
-        );
+    fn every_color_has_a_config_key() {
+        let mut theme = DEFAULT_THEME;
+        let keys = [
+            "primary",
+            "muted",
+            "border",
+            "selection-bg",
+            "danger",
+            "spectrum-low",
+            "spectrum-high",
+        ];
+        for key in keys {
+            *theme.color_mut(key).unwrap() = Color::Indexed(1);
+        }
         assert_eq!(
             theme,
             Theme {
-                border: Color::Rgb(171, 205, 239),
-                ..LIGHT_THEME
+                primary: Color::Indexed(1),
+                muted: Color::Indexed(1),
+                border: Color::Indexed(1),
+                selection_bg: Color::Indexed(1),
+                danger: Color::Indexed(1),
+                spectrum_low: Color::Indexed(1),
+                spectrum_high: Color::Indexed(1),
             }
         );
-        let warning = warning.unwrap();
-        assert!(
-            warning.contains("primary 的值 \"#12345\" 无法识别"),
-            "{warning}"
-        );
-        assert!(!warning.contains("border"), "{warning}");
-    }
-
-    #[test]
-    fn an_unknown_preset_falls_back_to_default_but_keeps_overrides() {
-        let (theme, warning) = resolve(
-            r##"
-            preset = "dark"
-            primary = "white"
-            "##,
-        );
-        assert_eq!(
-            theme,
-            Theme {
-                primary: Color::White,
-                ..DEFAULT_THEME
-            }
-        );
-        assert!(
-            warning
-                .unwrap()
-                .contains("未知预设 \"dark\"，已改用 default")
-        );
-    }
-
-    #[test]
-    fn unknown_keys_are_reported_together() {
-        let (theme, warning) = resolve(
-            r##"
-            preset = "nope"
-            primay = "#FFFFFF"
-            background = "black"
-            "##,
-        );
-        assert_eq!(theme, DEFAULT_THEME);
-        assert_eq!(
-            warning.unwrap(),
-            "主题配置有误: 未知预设 \"nope\"，已改用 default；\
-             未知项 background 已忽略；未知项 primay 已忽略"
-        );
+        assert!(theme.color_mut("selection_bg").is_none());
+        assert!(theme.color_mut("background").is_none());
     }
 }

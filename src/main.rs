@@ -14,7 +14,7 @@ use ratatui::prelude::*;
 
 use music_player::app::App;
 use music_player::cli::{Cli, validate_directory};
-use music_player::config::{AppConfig, AppPaths};
+use music_player::config::{self, AppConfig, AppPaths, LoadedConfig};
 use music_player::media::{MediaEvent, MediaSession};
 use music_player::ui::{self, MouseInput, ViewLayout};
 
@@ -31,18 +31,18 @@ fn main() -> ExitCode {
 fn run_application() -> Result<(), String> {
     let cli = Cli::parse();
     let paths = AppPaths::discover().map_err(|error| format!("无法确定用户数据目录: {error}"))?;
-    let (mut config, mut warning) = AppConfig::load(&paths.config_file)
+    let LoadedConfig {
+        mut config,
+        message: mut warning,
+        writable,
+    } = AppConfig::load(&paths)
         .map_err(|error| format!("无法读取配置 {}: {error}", paths.config_file.display()))?;
-    let mut save_config_on_exit = warning.is_none();
 
     let library_dir = if let Some(path) = cli.set_library {
         let path = validate_directory(&path).map_err(|error| error.to_string())?;
+        config::set_library(&paths.config_file, &path)?;
         config.library_dir = Some(path.clone());
-        config
-            .save(&paths.config_file)
-            .map_err(|error| format!("无法保存主音乐库设置: {error}"))?;
         warning = Some(format!("主音乐库已设置为 {}", path.display()));
-        save_config_on_exit = true;
         path
     } else if let Some(path) = cli.directory {
         validate_directory(&path).map_err(|error| error.to_string())?
@@ -61,7 +61,7 @@ fn run_application() -> Result<(), String> {
 
     // 播放器、播放列表目录及工作线程都在切换终端模式前初始化。
     // 这样启动失败时错误仍是普通、可复制的终端文本。
-    let mut app = App::new(library_dir, paths, config, warning, save_config_on_exit)?;
+    let mut app = App::new(library_dir, paths, config, warning, writable)?;
     let session = match MediaSession::start() {
         Ok(session) => Some(session),
         Err(error) => {
