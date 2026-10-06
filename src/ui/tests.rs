@@ -10,6 +10,9 @@ use crate::theme::DEFAULT_THEME;
 use crate::track::Track;
 
 use super::ListView;
+use super::keymap::{
+    self, DELETE_CONFIRM, HELP, Key, LIBRARY, NAME_INPUT, PLAYLIST_TRACKS, PLAYLISTS, QUEUE, SEARCH,
+};
 use super::library::{
     INACTIVE_ICON, LIST_ICON_WIDTH, PAUSE_ACTION_ICON, PLAY_ACTION_ICON, STOPPED_ICON,
     playback_action_indicator, track_row_text,
@@ -253,5 +256,69 @@ fn queue_test_track(path: PathBuf) -> Track {
         disc_number: None,
         file_size: 1,
         modified_ns: 1,
+    }
+}
+
+#[test]
+fn every_binding_is_reachable_in_its_table() {
+    use crossterm::event::{KeyEvent, KeyModifiers};
+    let tables = [
+        ("library", LIBRARY, false),
+        ("search", SEARCH, true),
+        ("help", HELP, false),
+        ("playlists", PLAYLISTS, false),
+        ("playlist tracks", PLAYLIST_TRACKS, false),
+        ("queue", QUEUE, false),
+        ("name input", NAME_INPUT, true),
+        ("delete confirm", DELETE_CONFIRM, false),
+    ];
+    for (name, table, text_input) in tables {
+        for binding in table {
+            for (key, action) in binding.map {
+                let event = match *key {
+                    Key::Any(code) | Key::NoShift(code) => KeyEvent::new(code, KeyModifiers::NONE),
+                    Key::Shift(code) => KeyEvent::new(code, KeyModifiers::SHIFT),
+                };
+                assert_eq!(
+                    keymap::lookup(table, text_input, event).as_ref(),
+                    Some(action),
+                    "{name}: {key:?} 被前面的绑定遮住了"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn generated_hints_keep_the_overlay_wording() {
+    assert_eq!(
+        keymap::hints(PLAYLISTS),
+        "c 新建 · a 加入选中歌曲 · Enter 查看 · x 删除 · Esc 关闭"
+    );
+    assert_eq!(
+        keymap::hints(PLAYLIST_TRACKS),
+        "Enter 从此处播放 · d 从列表移除 · Esc 返回"
+    );
+    assert_eq!(
+        keymap::hints(QUEUE),
+        "Enter 跳到此处播放 · d 移除 · J/K 上下移动 · c 清空 · Esc 关闭"
+    );
+    assert_eq!(keymap::hints(NAME_INPUT), "Enter 创建 · Esc 取消");
+    assert_eq!(keymap::hints(DELETE_CONFIRM), "y 确认 · n/Esc 取消");
+    assert_eq!(keymap::hints(HELP), "? / Esc 关闭");
+    assert_eq!(keymap::hints(SEARCH), "Enter 播放 · Esc 清除");
+    assert!(keymap::library_hints().ends_with("? 帮助 · q 退出"));
+}
+
+#[test]
+fn help_lines_align_their_descriptions() {
+    let lines = keymap::help_lines();
+    assert_eq!(lines.len(), 20, "帮助弹层按 20 行设计高度");
+    for (line, binding) in lines
+        .iter()
+        .zip(LIBRARY.iter().filter(|b| !b.keys.is_empty()))
+    {
+        let prefix = line.strip_suffix(binding.text).unwrap();
+        assert_eq!(UnicodeWidthStr::width(prefix), 15, "{line:?}");
     }
 }

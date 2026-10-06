@@ -7,10 +7,10 @@ use crate::config::{AppConfig, AppPaths};
 use crate::player::PlayState;
 use crate::track::{RepeatMode, SortKey, Track};
 
-use crate::ui::ViewLayout;
+use crate::ui::{MouseInput, ViewLayout};
 
 use super::playback::short_reason;
-use super::{App, BagUpdate, Overlay};
+use super::{Action, App, BagUpdate, Overlay};
 
 fn test_app(config: AppConfig) -> (tempfile::TempDir, App) {
     let temp = tempfile::tempdir().unwrap();
@@ -44,6 +44,20 @@ fn track(path: PathBuf) -> Track {
         disc_number: None,
         file_size: 1,
         modified_ns: 1,
+    }
+}
+
+/// 按一次键：经按键表翻译成 Action 再分派，与主循环相同。
+fn press(app: &mut App, key: KeyEvent) {
+    if let Some(action) = crate::ui::key_action(app, key) {
+        app.dispatch(action);
+    }
+}
+
+/// 一次鼠标事件：按上一帧布局翻译成 Action 再分派，与主循环相同。
+fn mouse(app: &mut App, input: &mut MouseInput, event: MouseEvent, view: &ViewLayout) {
+    for action in input.actions(event, view, app) {
+        app.dispatch(action);
     }
 }
 
@@ -215,15 +229,17 @@ fn user_actions_cancel_pending_selection_restore() {
     assert_eq!(app.selected, 1);
     assert!(app.pending_selected_path.is_none());
 
-    for code in [KeyCode::Char('x'), KeyCode::Backspace, KeyCode::Esc] {
+    for action in [
+        Action::InputChar('x'),
+        Action::InputBackspace,
+        Action::Back,
+        Action::Activate,
+    ] {
+        app.search_active = true;
         app.pending_selected_path = Some(app.tracks[2].path.clone());
-        app.handle_search_key(code);
+        app.dispatch(action);
         assert!(app.pending_selected_path.is_none());
     }
-
-    app.pending_selected_path = Some(app.tracks[2].path.clone());
-    app.handle_search_key(KeyCode::Enter);
-    assert!(app.pending_selected_path.is_none());
 }
 
 #[test]
@@ -268,15 +284,24 @@ fn z_cycles_repeat_only_and_s_toggles_shuffle() {
     assert_eq!(app.config.repeat, RepeatMode::None);
     assert!(!app.config.shuffle);
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+    );
     assert_eq!(app.config.repeat, RepeatMode::All);
     assert!(!app.config.shuffle);
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+    );
     assert_eq!(app.config.repeat, RepeatMode::All);
     assert!(app.config.shuffle);
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+    );
     assert!(!app.config.shuffle);
     assert_eq!(app.config.repeat, RepeatMode::All);
 }
@@ -333,11 +358,17 @@ fn visualizer_toggle_updates_persisted_setting() {
     let (_temp, mut app) = test_app(AppConfig::default());
     assert!(app.config.visualizer_enabled);
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+    );
     assert!(!app.config.visualizer_enabled);
     assert!(app.spectrum_bars().iter().all(|value| *value == 0.0));
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+    );
     assert!(app.config.visualizer_enabled);
 }
 
@@ -345,13 +376,19 @@ fn visualizer_toggle_updates_persisted_setting() {
 fn visualizer_key_does_not_escape_search_or_overlay_modes() {
     let (_temp, mut app) = test_app(AppConfig::default());
     app.search_active = true;
-    app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+    );
     assert!(app.config.visualizer_enabled);
     assert_eq!(app.search.query(), "v");
 
     app.search_active = false;
     app.overlay = Overlay::Help;
-    app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+    );
     assert!(app.config.visualizer_enabled);
     assert_eq!(app.overlay, Overlay::Help);
 }
@@ -381,30 +418,48 @@ fn queue_panel_edits_reorder_remove_and_clear_the_queue() {
         .collect();
     app.queue = paths.iter().cloned().collect();
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::NONE),
+    );
     assert_eq!(app.overlay, Overlay::Queue);
 
     // J 把首项下移一位，选择跟着它走。
-    app.handle_key(KeyEvent::new(KeyCode::Char('J'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('J'), KeyModifiers::NONE),
+    );
     assert_eq!(app.queue_selected, 1);
     assert_eq!(app.queue[0], paths[1]);
     assert_eq!(app.queue[1], paths[0]);
 
     // K 移回原位。
-    app.handle_key(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('K'), KeyModifiers::NONE),
+    );
     assert_eq!(app.queue_selected, 0);
     assert_eq!(app.queue[0], paths[0]);
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+    );
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
+    );
     assert_eq!(app.queue.len(), 2);
     assert_eq!(app.queue[1], paths[2]);
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+    );
     assert!(app.queue.is_empty());
     assert_eq!(app.queue_selected, 0);
 
-    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    press(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert_eq!(app.overlay, Overlay::None);
 }
 
@@ -417,7 +472,10 @@ fn queue_selection_stays_in_range_when_the_last_entry_is_removed() {
     app.overlay = Overlay::Queue;
     app.queue_selected = 1;
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
+    );
 
     assert_eq!(app.queue.len(), 1);
     assert_eq!(app.queue_selected, 0);
@@ -443,7 +501,7 @@ fn playing_a_queue_entry_drops_the_entries_before_it() {
     app.overlay = Overlay::Queue;
     app.queue_selected = 1;
 
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    press(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
     assert_eq!(app.overlay, Overlay::None);
     assert_eq!(app.playing_index, Some(1));
@@ -461,8 +519,14 @@ fn queue_keys_do_not_leak_to_the_library_while_the_panel_is_open() {
     app.overlay = Overlay::Queue;
 
     // c 在曲库里没有绑定，但 q 会退出程序、s 会切随机，都必须被弹层吃掉。
-    app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+    );
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+    );
 
     assert!(!app.should_quit);
     assert!(!app.config.shuffle);
@@ -609,7 +673,7 @@ fn a_queue_entry_missing_from_the_library_is_named_in_the_notice() {
     // 列表循环让“下一首”与光标是否已经落到曲库上无关，避免依赖搜索线程的时序。
     app.config.repeat = RepeatMode::All;
 
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    press(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
     assert_eq!(app.playing_index, Some(0));
     let message = app.message.clone().expect("跳过提示丢失");
@@ -727,7 +791,10 @@ fn cycling_the_sort_key_reorders_the_library_and_keeps_the_playing_track() {
     app.play_index(0, false, BagUpdate::Reanchor).unwrap();
     assert_eq!(app.playing_index, Some(0));
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
+    );
 
     assert_eq!(app.config.sort.key, SortKey::Title);
     let order: Vec<&str> = app
@@ -750,7 +817,10 @@ fn toggling_the_sort_direction_reverses_the_library() {
     sort_fixture(&mut app, &temp.path().join("music"));
     app.config.sort.key = SortKey::Title;
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('O'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('O'), KeyModifiers::NONE),
+    );
 
     assert!(app.config.sort.descending);
     let order: Vec<&str> = app
@@ -769,7 +839,10 @@ fn resorting_reanchors_the_shuffle_bag_onto_the_new_indices() {
     app.config.shuffle = true;
     app.play_index(0, false, BagUpdate::Reanchor).unwrap();
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
+    );
 
     // 重排让所有下标失效，随机袋必须重建到新下标上，并从当前曲目开始。
     assert_eq!(app.shuffle_order.first().copied(), app.playing_index);
@@ -845,15 +918,16 @@ fn clicking_a_library_row_selects_it_and_double_click_plays_it() {
 
     // 曲库列表从第 1 行开始（第 0 行是边框），每首两行，因此第 5、6 行是第 3 首。
     let (view, _) = render(&app, 90, 24);
-    app.handle_mouse(click(10, 6), &view);
+    let mut input = MouseInput::default();
+    mouse(&mut app, &mut input, click(10, 6), &view);
     assert_eq!(app.selected, 2);
     assert_eq!(app.playing_index, None);
 
-    app.handle_mouse(click(10, 6), &view);
+    mouse(&mut app, &mut input, click(10, 6), &view);
     assert_eq!(app.playing_index, Some(2));
 
     // 点标题行同样算这一首。
-    app.handle_mouse(click(10, 3), &view);
+    mouse(&mut app, &mut input, click(10, 3), &view);
     assert_eq!(app.selected, 1);
 }
 
@@ -872,8 +946,10 @@ fn two_clicks_on_different_rows_are_not_a_double_click() {
     settle_search_and_selection(&mut app);
 
     let (view, _) = render(&app, 90, 24);
-    app.handle_mouse(click(10, 1), &view);
-    app.handle_mouse(click(10, 3), &view);
+
+    let mut input = MouseInput::default();
+    mouse(&mut app, &mut input, click(10, 1), &view);
+    mouse(&mut app, &mut input, click(10, 3), &view);
 
     assert_eq!(app.selected, 1);
     assert_eq!(app.playing_index, None);
@@ -889,14 +965,16 @@ fn clicks_below_the_last_row_and_outside_the_list_are_ignored() {
     settle_search_and_selection(&mut app);
 
     let (view, _) = render(&app, 90, 24);
+
+    let mut input = MouseInput::default();
     // 列表里只有一首，下面全是空行；点空行不应该改变选中项，也不应该 panic。
-    app.handle_mouse(click(10, 6), &view);
-    app.handle_mouse(click(10, 6), &view);
+    mouse(&mut app, &mut input, click(10, 6), &view);
+    mouse(&mut app, &mut input, click(10, 6), &view);
     assert_eq!(app.selected, 0);
     assert_eq!(app.playing_index, None);
 
     // 边框列同样在列表区域之外。
-    app.handle_mouse(click(0, 1), &view);
+    mouse(&mut app, &mut input, click(0, 1), &view);
     assert_eq!(app.playing_index, None);
 }
 
@@ -912,8 +990,15 @@ fn clicking_the_progress_bar_seeks_within_the_current_track() {
     app.play_index(0, false, BagUpdate::Reanchor).unwrap();
 
     let (view, _) = render(&app, 90, 24);
+
+    let mut input = MouseInput::default();
     let bar = view.progress.expect("进度条没有记录位置");
-    app.handle_mouse(click(bar.x + bar.width / 2, bar.y), &view);
+    mouse(
+        &mut app,
+        &mut input,
+        click(bar.x + bar.width / 2, bar.y),
+        &view,
+    );
 
     let position = app.player.position();
     assert!(
@@ -933,14 +1018,20 @@ fn digit_keys_jump_to_tenths_of_the_track() {
     app.search.replace_tracks(&app.tracks);
     app.play_index(0, false, BagUpdate::Reanchor).unwrap();
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE),
+    );
     let position = app.player.position();
     assert!(
         position >= Duration::from_secs(45) && position <= Duration::from_secs(55),
         "按 5 后位置是 {position:?}"
     );
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE),
+    );
     assert!(app.player.position() < Duration::from_secs(5));
 }
 
@@ -955,17 +1046,23 @@ fn long_seek_moves_a_minute_with_shift_arrows_or_uppercase_keys() {
     app.search.replace_tracks(&app.tracks);
     app.play_index(0, false, BagUpdate::Reanchor).unwrap();
 
-    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
+    press(&mut app, KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
     let position = app.player.position();
     assert!(
         position >= Duration::from_secs(60) && position <= Duration::from_secs(65),
         "Shift+→ 后位置是 {position:?}"
     );
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('H'), KeyModifiers::SHIFT));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('H'), KeyModifiers::SHIFT),
+    );
     assert!(app.player.position() < Duration::from_secs(5));
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT),
+    );
     let position = app.player.position();
     assert!(
         position >= Duration::from_secs(60) && position <= Duration::from_secs(65),
@@ -973,7 +1070,7 @@ fn long_seek_moves_a_minute_with_shift_arrows_or_uppercase_keys() {
     );
 
     // 普通方向键仍是 10 秒。
-    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    press(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
     let position = app.player.position();
     assert!(
         position >= Duration::from_secs(50) && position <= Duration::from_secs(55),
@@ -988,10 +1085,19 @@ fn bracket_keys_adjust_volume_by_one_percent() {
         ..AppConfig::default()
     });
 
-    app.handle_key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE),
+    );
     assert_eq!(app.player.volume(), 51);
-    app.handle_key(KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE));
-    app.handle_key(KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE),
+    );
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE),
+    );
     assert_eq!(app.player.volume(), 49);
     assert_eq!(app.config.volume, 49);
 }
@@ -1006,13 +1112,30 @@ fn the_wheel_moves_the_selection_inside_the_hovered_list() {
     settle_search_and_selection(&mut app);
 
     let (view, _) = render(&app, 90, 24);
-    app.handle_mouse(wheel(MouseEventKind::ScrollDown, 10, 3), &view);
+
+    let mut input = MouseInput::default();
+    mouse(
+        &mut app,
+        &mut input,
+        wheel(MouseEventKind::ScrollDown, 10, 3),
+        &view,
+    );
     assert_eq!(app.selected, 3);
-    app.handle_mouse(wheel(MouseEventKind::ScrollUp, 10, 3), &view);
+    mouse(
+        &mut app,
+        &mut input,
+        wheel(MouseEventKind::ScrollUp, 10, 3),
+        &view,
+    );
     assert_eq!(app.selected, 0);
 
     // 列表之外的滚动不应该动选中项。
-    app.handle_mouse(wheel(MouseEventKind::ScrollDown, 10, 23), &view);
+    mouse(
+        &mut app,
+        &mut input,
+        wheel(MouseEventKind::ScrollDown, 10, 23),
+        &view,
+    );
     assert_eq!(app.selected, 0);
 }
 
@@ -1028,6 +1151,8 @@ fn overlay_clicks_go_to_the_overlay_list_not_the_library() {
     app.overlay = Overlay::Queue;
 
     let (view, backend) = render(&app, 90, 24);
+
+    let mut input = MouseInput::default();
     // 找到队列面板第 3 行的屏幕坐标，点它。
     let row = (0..24)
         .find(|row| {
@@ -1043,7 +1168,7 @@ fn overlay_clicks_go_to_the_overlay_list_not_the_library() {
         .map(|_| 45)
         .expect("该行不在队列列表内");
 
-    app.handle_mouse(click(queue_area_column, row), &view);
+    mouse(&mut app, &mut input, click(queue_area_column, row), &view);
 
     assert_eq!(app.queue_selected, 2);
     // 曲库的选中项不能被弹层上的点击带偏。
@@ -1118,7 +1243,10 @@ fn restart_resumes_the_last_track_paused_at_its_position() {
     );
     assert!(app.message.as_deref().unwrap().contains("已恢复上次播放"));
 
-    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+    );
     assert_eq!(app.player.state(), PlayState::Playing);
 }
 
@@ -1257,7 +1385,10 @@ fn the_lyrics_key_hides_lyrics_and_the_choice_is_saved() {
     let (temp, mut app) = test_app(AppConfig::default());
     play_track_with_lyrics(temp.path(), &mut app);
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+    );
     assert!(!app.config.lyrics_enabled);
     assert!(app.lyrics().is_none());
     let (view, backend) = render(&app, 120, 30);
@@ -1266,7 +1397,10 @@ fn the_lyrics_key_hides_lyrics_and_the_choice_is_saved() {
     assert!(!rows.iter().any(|row| row.contains("第二句")));
     assert!(view.library.contains(110, 5), "曲库占满整行");
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+    press(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+    );
     assert!(app.lyrics().is_some());
     assert_eq!(app.message.as_deref(), Some("已开启歌词"));
 }

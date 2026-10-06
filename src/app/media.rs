@@ -1,43 +1,14 @@
-//! 系统媒体命令、Seek 与对外快照。
+//! 跳转、Seeked 通知与系统媒体会话快照。
 
 use std::time::Duration;
 
-use crate::media::{MediaCommand, MediaEvent, MediaSnapshot};
+use crate::media::{MediaEvent, MediaSnapshot};
 use crate::player::PlayState;
 use crate::track::RepeatMode;
 
 use super::App;
 
 impl App {
-    pub fn apply_media_command(&mut self, command: MediaCommand) {
-        match command {
-            MediaCommand::Play => self.play_or_resume(),
-            MediaCommand::Toggle => self.toggle_or_start(),
-            MediaCommand::Pause => self.player.pause(),
-            MediaCommand::Next => self.play_next(false),
-            MediaCommand::Previous => self.play_previous(),
-            MediaCommand::SeekRelMicros(offset) => self.seek_rel_micros(offset),
-            MediaCommand::SeekTo { position, track_id } => {
-                self.seek_to_requested(position, track_id.as_deref());
-            }
-            MediaCommand::SetVolume(volume) => {
-                if volume > 0 {
-                    self.player.set_muted(false);
-                    self.config.muted = false;
-                }
-                self.player.set_volume(volume);
-                self.config.volume = volume;
-            }
-            MediaCommand::SetRepeat(repeat) => self.config.repeat = repeat,
-            MediaCommand::SetShuffle(shuffle) => {
-                if shuffle != self.config.shuffle {
-                    self.toggle_shuffle();
-                }
-            }
-            MediaCommand::Quit => self.should_quit = true,
-        }
-    }
-
     pub(super) fn seek_rel_micros(&mut self, offset: i64) {
         if self.output_blocks_playback() {
             return;
@@ -74,7 +45,7 @@ impl App {
         self.seek_to_requested(duration.mul_f64(ratio), None);
     }
 
-    fn seek_to_requested(&mut self, position: Duration, track_id: Option<&str>) {
+    pub(super) fn seek_to_requested(&mut self, position: Duration, track_id: Option<&str>) {
         if self.output_blocks_playback() {
             return;
         }

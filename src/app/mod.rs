@@ -1,12 +1,12 @@
 //! 应用状态和所有可观察的播放行为。
 
-mod input;
+mod action;
 mod lyrics;
 mod media;
-mod mouse;
 mod playback;
 mod playlists;
 mod queue;
+mod selection;
 mod session;
 mod sorting;
 
@@ -15,7 +15,7 @@ mod tests;
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::config::{AppConfig, AppPaths};
 use crate::library::{LibraryEvent, LibraryWorker};
@@ -28,6 +28,7 @@ use crate::session::Session;
 use crate::spectrum::SpectrumProcessor;
 use crate::track::Track;
 
+pub use action::Action;
 use playback::Skip;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,8 +85,6 @@ pub struct App {
     /// 歌词所属的曲目路径与结果（None 表示这首没有歌词）。
     /// 路径与播放器当前曲目不一致时在下一个 tick 重新加载。
     lyrics: Option<(PathBuf, Option<Lyrics>)>,
-    /// 上一次鼠标按下的时刻与位置，仅用于判定双击。
-    last_click: Option<(Instant, u16, u16)>,
 }
 
 impl App {
@@ -177,7 +176,6 @@ impl App {
             media_events: Vec::new(),
             pending_session,
             lyrics: None,
-            last_click: None,
         })
     }
 

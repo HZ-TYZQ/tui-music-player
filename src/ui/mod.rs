@@ -1,7 +1,9 @@
 //! Ratatui 界面：音乐库、播放状态、搜索和模态弹层。
 
+mod keymap;
 mod library;
 mod lyrics;
+mod mouse;
 mod now_playing;
 mod overlays;
 mod text;
@@ -16,8 +18,10 @@ use ratatui::widgets::{Block, ListState, Paragraph};
 use crate::app::App;
 use crate::theme::{DEFAULT_THEME, Theme};
 
+pub use keymap::key_action;
 use library::draw_library;
 use lyrics::{draw_lyrics, lyrics_pane_width};
+pub use mouse::MouseInput;
 use now_playing::draw_now_playing;
 use overlays::draw_overlay;
 pub use text::fmt_duration;
@@ -170,8 +174,9 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
             Span::styled("█", Style::new().fg(theme.primary)),
             Span::styled(
                 format!(
-                    "  {} 个结果 · Enter 播放 · Esc 清除",
-                    app.visible_indices().len()
+                    "  {} 个结果 · {}",
+                    app.visible_indices().len(),
+                    keymap::hints(keymap::SEARCH)
                 ),
                 Style::new().fg(theme.muted),
             ),
@@ -183,7 +188,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         ])
     } else {
         Line::from(Span::styled(
-            " ↑↓/jk 选择 · Enter 播放 · Space 暂停 · / 搜索 · o 排序 · v 频谱 · Q 队列 · P 列表 · ? 帮助 · q 退出",
+            format!(" {}", keymap::library_hints()),
             Style::new().fg(theme.muted),
         ))
     };

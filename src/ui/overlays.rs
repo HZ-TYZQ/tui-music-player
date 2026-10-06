@@ -12,6 +12,7 @@ use crate::theme::Theme;
 use crate::track::Track;
 
 use super::ListView;
+use super::keymap::{self, DELETE_CONFIRM, HELP, NAME_INPUT, PLAYLIST_TRACKS, PLAYLISTS, QUEUE};
 use super::text::{fmt_duration, now_playing_text, truncate_display};
 
 pub(super) fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme, view: &mut ListView) {
@@ -24,35 +25,17 @@ pub(super) fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme, view: &m
     }
     match app.overlay {
         Overlay::None => {}
-        Overlay::Help => draw_text_popup(
-            frame,
-            " 快捷键帮助 · ? / Esc 关闭 ",
-            vec![
-                "↑/↓ 或 j/k    选择歌曲",
-                "Enter          立即播放（保留队列）",
-                "Space          暂停 / 继续",
-                "←/→ 或 h/l    后退 / 前进 10 秒",
-                "H/L、Shift+←/→ 后退 / 前进 60 秒",
-                "0–9            跳到 0% – 90% 位置",
-                "- / = · [ / ]  音量 ±5% / ±1%",
-                "m              静音",
-                "n / p          下一首 / 上一首历史",
-                "z              循环方式：顺序 / 列表 / 单曲",
-                "s              开 / 关随机播放",
-                "v / y          显示 / 隐藏频谱 / 歌词",
-                "o / O          排序字段 / 升降序",
-                "M              开 / 关鼠标",
-                "/              实时模糊搜索",
-                "r              后台重新扫描",
-                "a / A          加到队尾 / 设为下一首",
-                "Q              播放队列",
-                "P              播放列表",
-                "q              退出",
-            ],
-            62,
-            22,
-            theme,
-        ),
+        Overlay::Help => {
+            let lines = keymap::help_lines();
+            draw_text_popup(
+                frame,
+                &format!(" 快捷键帮助 · {} ", keymap::hints(HELP)),
+                lines.iter().map(String::as_str).collect(),
+                62,
+                lines.len() as u16 + 2,
+                theme,
+            );
+        }
         Overlay::Playlists => draw_playlists(frame, app, theme, view),
         Overlay::Queue => draw_queue(frame, app, theme, view),
         Overlay::PlaylistTracks => draw_playlist_tracks(frame, app, theme, view),
@@ -63,7 +46,7 @@ pub(super) fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme, view: &m
                 "请输入名称：",
                 &format!("> {}█", app.name_input),
                 "",
-                "Enter 创建 · Esc 取消",
+                &keymap::hints(NAME_INPUT),
             ],
             58,
             8,
@@ -83,7 +66,7 @@ pub(super) fn draw_overlay(frame: &mut Frame, app: &App, theme: &Theme, view: &m
                     &format!("删除播放列表“{name}”？"),
                     "音乐文件不会被删除。",
                     "",
-                    "y 确认 · n/Esc 取消",
+                    &keymap::hints(DELETE_CONFIRM),
                 ],
                 56,
                 8,
@@ -128,8 +111,7 @@ fn draw_playlists(frame: &mut Frame, app: &App, theme: &Theme, view: &mut ListVi
     view.record(viewport, app.playlists.all().len());
     let help = help_row(inner);
     frame.render_widget(
-        Paragraph::new("c 新建 · a 加入选中歌曲 · Enter 查看 · x 删除 · Esc 关闭")
-            .style(Style::new().fg(theme.muted)),
+        Paragraph::new(keymap::hints(PLAYLISTS)).style(Style::new().fg(theme.muted)),
         help,
     );
 }
@@ -174,8 +156,7 @@ fn draw_playlist_tracks(frame: &mut Frame, app: &App, theme: &Theme, view: &mut 
     view.record(viewport, playlist.tracks.len());
     let help = help_row(inner);
     frame.render_widget(
-        Paragraph::new("Enter 从此处播放 · d 从列表移除 · Esc 返回")
-            .style(Style::new().fg(theme.muted)),
+        Paragraph::new(keymap::hints(PLAYLIST_TRACKS)).style(Style::new().fg(theme.muted)),
         help,
     );
 }
@@ -294,8 +275,7 @@ fn draw_queue(frame: &mut Frame, app: &App, theme: &Theme, view: &mut ListView) 
     view.record(viewport, app.queue.len());
     let help = help_row(inner);
     frame.render_widget(
-        Paragraph::new("Enter 跳到此处播放 · d 移除 · J/K 上下移动 · c 清空 · Esc 关闭")
-            .style(Style::new().fg(theme.muted)),
+        Paragraph::new(keymap::hints(QUEUE)).style(Style::new().fg(theme.muted)),
         help,
     );
 }

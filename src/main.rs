@@ -16,7 +16,7 @@ use music_player::app::App;
 use music_player::cli::{Cli, validate_directory};
 use music_player::config::{AppConfig, AppPaths};
 use music_player::media::{MediaEvent, MediaSession};
-use music_player::ui::{self, ViewLayout};
+use music_player::ui::{self, MouseInput, ViewLayout};
 
 fn main() -> ExitCode {
     match run_application() {
@@ -94,6 +94,7 @@ fn run(
     session: Option<&MediaSession>,
 ) -> io::Result<()> {
     let mut view = ViewLayout::default();
+    let mut mouse = MouseInput::default();
     let mut mouse_captured = false;
     while !app.should_quit {
         if app.config.mouse_enabled != mouse_captured {
@@ -110,20 +111,26 @@ fn run(
         };
         if event::poll(Duration::from_millis(poll_ms))? {
             match event::read()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    if let Some(action) = ui::key_action(app, key) {
+                        app.dispatch(action);
+                    }
+                }
                 // 鼠标捕获会连移动一起上报，这里直接丢弃，避免空闲时被持续唤醒。
                 // 关闭鼠标后即便仍有序列送达（例如被上游注入），也不再处理。
-                Event::Mouse(mouse)
-                    if mouse_captured && !matches!(mouse.kind, MouseEventKind::Moved) =>
+                Event::Mouse(event)
+                    if mouse_captured && !matches!(event.kind, MouseEventKind::Moved) =>
                 {
-                    app.handle_mouse(mouse, &view);
+                    for action in mouse.actions(event, &view, app) {
+                        app.dispatch(action);
+                    }
                 }
                 _ => {}
             }
         }
         if let Some(session) = session {
             for command in session.try_recv() {
-                app.apply_media_command(command);
+                app.dispatch(command.into());
             }
         }
         app.on_tick();

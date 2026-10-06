@@ -1,30 +1,8 @@
-//! 临时播放队列弹层的交互和队列编辑行为。
-
-use crossterm::event::KeyCode;
+//! 临时播放队列：跳播、移除、重排和清空。
 
 use super::{App, BagUpdate, Overlay};
 
 impl App {
-    pub(super) fn handle_queue_key(&mut self, code: KeyCode) {
-        match code {
-            KeyCode::Esc | KeyCode::Char('Q') => self.overlay = Overlay::None,
-            KeyCode::Down | KeyCode::Char('j') => {
-                if !self.queue.is_empty() {
-                    self.queue_selected = (self.queue_selected + 1).min(self.queue.len() - 1);
-                }
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.queue_selected = self.queue_selected.saturating_sub(1);
-            }
-            KeyCode::Char('J') => self.move_queue_selected(1),
-            KeyCode::Char('K') => self.move_queue_selected(-1),
-            KeyCode::Enter => self.play_queue_selected(),
-            KeyCode::Char('d') => self.remove_queue_selected(),
-            KeyCode::Char('c') => self.clear_queue(),
-            _ => {}
-        }
-    }
-
     /// 跳到队列中的某一项：它之前的条目视为已跳过，直接从队列丢弃。
     pub(super) fn play_queue_selected(&mut self) {
         if self.output_blocks_playback() {
@@ -51,7 +29,7 @@ impl App {
         }
     }
 
-    fn remove_queue_selected(&mut self) {
+    pub(super) fn remove_queue_selected(&mut self) {
         if self.queue.remove(self.queue_selected).is_none() {
             self.message = Some("队列是空的".to_owned());
             return;
@@ -60,7 +38,7 @@ impl App {
         self.message = Some(format!("已从队列移除，队列中还有 {} 首", self.queue.len()));
     }
 
-    fn clear_queue(&mut self) {
+    pub(super) fn clear_queue(&mut self) {
         if self.queue.is_empty() {
             self.message = Some("队列是空的".to_owned());
             return;
@@ -72,7 +50,7 @@ impl App {
     }
 
     /// 上移或下移选中条目，选择跟随该条目移动。
-    fn move_queue_selected(&mut self, offset: isize) {
+    pub(super) fn move_queue_selected(&mut self, offset: isize) {
         let target = self.queue_selected as isize + offset;
         if target < 0 || target as usize >= self.queue.len() {
             return;
