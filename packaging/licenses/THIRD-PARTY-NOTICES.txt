@@ -15,6 +15,12 @@ Copyleft and Apache-only licenses
 - approx 0.5.1 (via cpal) — Apache-2.0
   https://github.com/brendanzab/approx
   License text: third-party-licenses\Apache-2.0.txt
+- kdl 6.7.1 (config.kdl parsing) — Apache-2.0
+  https://github.com/kdl-org/kdl-rs
+  License text: third-party-licenses\Apache-2.0.txt
+- miette 7.6.0 (via kdl) — Apache-2.0
+  https://github.com/zkat/miette
+  License text: third-party-licenses\Apache-2.0.txt
 - symphonia 0.5.5 and related crates (via rodio) — MPL-2.0
   symphonia-core, symphonia-metadata, symphonia-utils-xiph,
   symphonia-bundle-flac, symphonia-bundle-mp3, symphonia-codec-aac,

@@ -113,39 +113,70 @@ Open the complete in-application help.
 .TP
 .B q
 Quit.
-.SH THEME
-The
-.B [theme]
-table in config.toml picks a preset and may override single colors:
+.SH CONFIGURATION
+Settings live in
+.IR config.kdl ,
+written in KDL v2. The player creates it with comments on first start,
+carrying over the settings of a pre-1.5.0 config.toml, which is left in
+place.
 .PP
 .RS
 .nf
-[theme]
-preset = "light"
-selection_bg = "#C8D3F0"
+library "~/Music"
+playback {
+    volume 80
+    muted #false
+    repeat "all"        // none, all, or one
+    shuffle #false
+}
+sort "artist" descending=#false
+interface {
+    visualizer #true
+    lyrics #true
+    mouse #true
+}
+theme {
+    preset "light"
+    selection-bg "#C8D3F0"
+}
 .fi
 .RE
 .PP
-The presets are
+Booleans are #true and #false, and strings are double-quoted. A library path
+may start with ~ for the home directory. Sort keys are path, title, artist,
+album, and duration. Changes take effect on the next start.
+.PP
+On exit the player re-reads the file and rewrites only the settings changed
+while it ran (volume, mute, repeat, shuffle, sort, and the visualizer, lyrics,
+and mouse switches), in place, keeping comments and layout; settings missing
+from the file are appended to their block. Other edits made while it runs are
+kept.
+.B --set-library
+rewrites only the library line.
+.PP
+A wrong value or unknown key is ignored on its own and reported with its line
+number in the footer at start-up. A syntax error is reported with its line and
+column; the player then uses the defaults and leaves the file untouched.
+.PP
+The
+.B theme
+block picks a preset and may override single colors. The presets are
 .B default
 (grey-white levels for dark terminals),
 .B light
 (dark greys for light terminals), and
 .B terminal
 (palette colors only, following the terminal's own scheme). The colors that can
-be overridden are primary, muted, border, selection_bg, danger, spectrum_low, and
-spectrum_high. A color is #RRGGBB, a name such as red or dark-gray, a palette
-index from 0 to 255, or reset for the terminal's default foreground. The player
-never paints a background of its own.
-.PP
-An unknown preset falls back to default and an unreadable color keeps the
-preset value; both are reported in the footer at start-up, and the file is kept
-as written. The theme is read at start-up. Quit the player before editing the
-file, because it writes back the settings it started with when it exits.
+be overridden are primary, muted, border, selection-bg, danger, spectrum-low,
+and spectrum-high. A color is "#RRGGBB", a name such as "red" or "dark-gray", a
+palette index from "0" to "255", or "reset" for the terminal's default
+foreground. An unknown preset falls back to default and an unreadable color
+keeps the preset value. The player never paints a background of its own.
 .SH FILES
 .TP
-.I $XDG_CONFIG_HOME/tui-music-player/config.toml
-Main library, playback, visualizer, and theme settings.
+.I $XDG_CONFIG_HOME/tui-music-player/config.kdl
+Library, playback, sort, interface, and theme settings; see
+.BR CONFIGURATION .
 .TP
 .I $XDG_DATA_HOME/tui-music-player/playlists/*.json
 Independent named playlist files.

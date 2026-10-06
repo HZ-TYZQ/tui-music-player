@@ -18,7 +18,7 @@ Music Player 是一个用 Rust 编写的终端音乐库播放器。它使用 Rod
 - 歌词：读取同名 `.lrc` 或内嵌歌词，LRC 同步歌词随播放高亮滚动，纯文本歌词整段显示；宽终端在曲库右侧常驻歌词面板，窄终端在播放区边框显示同步歌词的当前行
 - 退出时记住当前歌曲与进度，下次打开同一音乐库时暂停在原处，按 `Space` 续播
 
-默认界面继承终端自身的背景，不绘制应用专属的全局背景。主要文字使用柔和白色，次要信息和边框采用分层灰白，音频频谱使用统一的灰白渐变。浅色终端或想沿用终端配色时，可以在配置中换用其他预设或逐项改色，见[主题](#主题)。
+默认界面继承终端自身的背景，不绘制应用专属的全局背景。主要文字使用柔和白色，次要信息和边框采用分层灰白，音频频谱使用统一的灰白渐变。浅色终端或想沿用终端配色时，可以在配置中换用其他预设或逐项改色，见[配置文件](#配置文件)。
 
 ## 安装与运行要求
 
@@ -105,29 +105,63 @@ music-player --help
 
 | 数据 | Linux | Windows |
 |---|---|---|
-| 配置 | `$XDG_CONFIG_HOME/tui-music-player/config.toml` | `%APPDATA%\tui-music-player\config.toml` |
+| 配置 | `$XDG_CONFIG_HOME/tui-music-player/config.kdl` | `%APPDATA%\tui-music-player\config.kdl` |
 | 播放列表 | `$XDG_DATA_HOME/tui-music-player/playlists/*.json` | `%APPDATA%\tui-music-player\playlists\*.json` |
 | 上次播放位置 | `$XDG_DATA_HOME/tui-music-player/session.toml` | `%APPDATA%\tui-music-player\session.toml` |
 | 可删除缓存 | `$XDG_CACHE_HOME/tui-music-player/library.sqlite3` | `%LOCALAPPDATA%\tui-music-player\library.sqlite3` |
 
 Linux 没有显式设置 XDG 基础目录时，通常对应 `~/.config`、`~/.local/share` 和 `~/.cache`。Windows Installer 和 Portable ZIP 使用相同的 AppData 目录；升级、删除 Portable 文件或卸载程序都不会删除这些用户数据。
 
-频谱默认开启，退出程序时会把 `visualizer_enabled` 与音量、静音等设置一起保存。频谱从当前播放的 PCM 分析，不会采集麦克风或其他应用的声音。
+频谱默认开启，`v` 的开关状态与音量、静音等设置一起在退出时写回配置文件。频谱从当前播放的 PCM 分析，不会采集麦克风或其他应用的声音。
 
 支持的音频格式：MP3、FLAC、WAV、OGG/OGA Vorbis、M4A/AAC、AAC ADTS、AIFF。Opus 暂缓支持；APE 与 WMA 不再支持。
 
-歌词来自与音频同名的 `.lrc`（如 `歌曲.flac` 旁的 `歌曲.lrc`）或音频标签中内嵌的歌词（FLAC/OGG 的 `LYRICS`、MP3 的 `USLT`、M4A 的 `©lyr`）。带时间标签的同步歌词优先于纯文本歌词；同一种里同名 `.lrc` 优先，`.lrc` 读不了、无法解码或没有时间标签时回退到内嵌歌词。纯文本歌词在面板中整段居中显示，放不下时随播放进度滚动；窄终端只显示同步歌词。`.lrc` 可为 UTF-8、GBK，或带 BOM 的 UTF-16；Big5、Shift_JIS 等其他编码不受支持，可能显示为乱码。支持一行多个时间标签、`[offset:±毫秒]` 和逐字时间标签；同一时刻的多行（如原文与译文）一起高亮。曲库区域不少于 96 列时，歌词面板固定在右侧，当前曲目没有歌词时显示“暂无歌词”，切歌不会改变曲库宽度；按 `y` 关闭歌词后曲库占满整行。新放入的 `.lrc` 在按 `r` 重扫后生效。`y` 的开关状态随配置保存为 `lyrics_enabled`。
+歌词来自与音频同名的 `.lrc`（如 `歌曲.flac` 旁的 `歌曲.lrc`）或音频标签中内嵌的歌词（FLAC/OGG 的 `LYRICS`、MP3 的 `USLT`、M4A 的 `©lyr`）。带时间标签的同步歌词优先于纯文本歌词；同一种里同名 `.lrc` 优先，`.lrc` 读不了、无法解码或没有时间标签时回退到内嵌歌词。纯文本歌词在面板中整段居中显示，放不下时随播放进度滚动；窄终端只显示同步歌词。`.lrc` 可为 UTF-8、GBK，或带 BOM 的 UTF-16；Big5、Shift_JIS 等其他编码不受支持，可能显示为乱码。支持一行多个时间标签、`[offset:±毫秒]` 和逐字时间标签；同一时刻的多行（如原文与译文）一起高亮。曲库区域不少于 96 列时，歌词面板固定在右侧，当前曲目没有歌词时显示“暂无歌词”，切歌不会改变曲库宽度；按 `y` 关闭歌词后曲库占满整行。新放入的 `.lrc` 在按 `r` 重扫后生效。`y` 的开关状态随配置保存为 `interface` 里的 `lyrics`。
 
 播放区域的图标表示按下 `Space` 后将执行的操作：播放中显示 `⏸︎`，暂停时显示 `⏵`。暂停符号附带文本样式选择符，实际字形由终端和字体决定。
 
-## 主题
+## 配置文件
 
-主题写在配置文件的 `[theme]` 段，先选一个预设，再按需改其中几种颜色：
+所有设置都在 `config.kdl` 里（位置见[用户数据](#用户数据)），使用 [KDL v2](https://kdl.dev) 格式。第一次启动时程序会生成一份带说明的配置；如果有 1.5.0 之前的 `config.toml`，其中的设置会搬进新文件，旧文件原样保留，退回旧版本时还能用。
 
-```toml
-[theme]
-preset = "light"          # default、light 或 terminal
-selection_bg = "#C8D3F0"  # 只写想改的颜色，其余沿用预设
+```kdl
+library "~/Music"
+
+playback {
+    volume 80            // 0–100
+    muted #false
+    repeat "all"         // "none"、"all" 或 "one"
+    shuffle #false
+}
+
+sort "artist" descending=#false   // "path"、"title"、"artist"、"album" 或 "duration"
+
+interface {
+    visualizer #true     // 频谱，按 v 开关
+    lyrics #true         // 歌词面板，按 y 开关
+    mouse #true          // 鼠标，按 M 开关
+}
+
+theme {
+    preset "default"
+}
+```
+
+- 布尔值写作 `#true` / `#false`，字符串要加双引号；路径可以用 `~` 开头表示家目录，Windows 路径里的 `\` 要写成 `\\`，或改用 `/`。
+- 改完重启播放器生效。没写的项使用默认值。
+- 运行中用按键改过的设置（音量、静音、循环、随机、排序和三个开关）会在退出时写回文件：程序重新读取文件，只改动这几项所在的行，其余内容和注释保持原样；文件里没有的项会补在所属的块末尾。播放器运行时也可以放心编辑配置，退出时不会覆盖你改的其他项。
+- 某一项写错（值不对、键名拼错）时只忽略这一项，启动时在底栏提示行号。整个文件有语法错误时本次使用默认设置并提示出错的行列，退出时也不会改动这个文件。
+- `--set-library PATH` 只改写 `library` 这一行。
+
+### 主题
+
+`theme {}` 块里先选一个预设，再按需改其中几种颜色：
+
+```kdl
+theme {
+    preset "light"            // "default"、"light" 或 "terminal"
+    selection-bg "#C8D3F0"    // 只写想改的颜色，其余沿用预设
+}
 ```
 
 - `default`：深色终端用的灰白层级，即默认界面
@@ -139,14 +173,12 @@ selection_bg = "#C8D3F0"  # 只写想改的颜色，其余沿用预设
 | `primary` | 标题、曲名、播放图标、进度条 | `#F2F2F2` | `#262626` | `reset` |
 | `muted` | 歌手、专辑、时长、帮助与提示 | `#B8B8B8` | `#5C5C5C` | `gray` |
 | `border` | 边框与分隔线 | `#8A8A8A` | `#8A8A8A` | `dark-gray` |
-| `selection_bg` | 选中行背景 | `#343846` | `#DCE0EA` | `dark-gray` |
+| `selection-bg` | 选中行背景 | `#343846` | `#DCE0EA` | `dark-gray` |
 | `danger` | 失效歌曲等异常 | `red` | `red` | `red` |
-| `spectrum_low` | 频谱低频端 | `#A8A8A8` | `#8A8A8A` | `gray` |
-| `spectrum_high` | 频谱高频端 | `#F2F2F2` | `#262626` | `reset` |
+| `spectrum-low` | 频谱低频端 | `#A8A8A8` | `#8A8A8A` | `gray` |
+| `spectrum-high` | 频谱高频端 | `#F2F2F2` | `#262626` | `reset` |
 
-颜色可以写成 `#RRGGBB`、颜色名（如 `red`、`dark-gray`、`light-blue`）、`0`–`255` 的调色板序号，或 `reset`（终端默认前景色）。频谱两端都是 `#RRGGBB` 时按频率渐变，否则低频一半和高频一半各用一端的颜色。主题没有背景色这一项，播放器始终继承终端背景。
-
-预设名写错时改用 `default`，某项颜色写错时只有这一项沿用预设，两者都会在启动时于底栏提示；配置文件里写的内容原样保留，留给你自己改正。主题在启动时读取，改完重启播放器生效。播放器退出时会写回启动时读到的配置，所以请先退出再编辑，否则改动会被覆盖。
+颜色可以写成 `#RRGGBB`、颜色名（如 `red`、`dark-gray`、`light-blue`）、`0`–`255` 的调色板序号，或 `reset`（终端默认前景色），都要加双引号。频谱两端都是 `#RRGGBB` 时按频率渐变，否则低频一半和高频一半各用一端的颜色。主题没有背景色这一项，播放器始终继承终端背景。预设名写错时改用 `default`，某项颜色写错时只有这一项沿用预设。
 
 ## 测试、RPM 与 Windows 发行包
 
